@@ -1,0 +1,15 @@
+# CMake out-of-tree builds
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+cmake_install.cmake
+compile_commands.json
+
+# IDE and platform files
+.vscode/
+.idea/
+*.user
+.DS_Store
+Thumbs.db
