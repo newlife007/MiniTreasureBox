@@ -2,6 +2,59 @@
 
 小小百宝箱是一款面向桌面的 AI 小工具、实用工具和轻量小游戏集合应用。
 
+## 第一阶段基础能力
+
+当前桌面基础框架已提供：
+
+- Qt 6 Widgets 桌面窗口，以及首页、分类、收藏、最近使用和设置导航。
+- 基于统一 `ToolMetadata`/`ITool` 接口的静态工具注册与全局搜索。
+- 使用 QSettings 持久化收藏、最近使用、主题和窗口布局。
+- 可即时切换并保存跟随系统、浅色和深色主题。
+- 完全本地的基础运行方式，不需要网络服务，也不会记录工具输入内容。
+
+具体离线工具将在后续阶段接入共享注册表和桌面框架。
+
+## 构建要求
+
+- CMake 3.22 或更高版本
+- 支持 C++20 的编译器
+- Qt 6 的 Core、Gui、Widgets 和 Test 组件
+
+## 配置、构建与测试
+
+Qt 安装在标准系统路径时：
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+```
+
+本开发环境中的 Qt 6.8.3 需要显式提供安装前缀：
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH='/projects/sandbox/Qt/6.8.3/gcc_64;/projects/sandbox/.qt-sysroot/usr'
+cmake --build build --parallel
+LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysroot/usr/lib64 \
+  ctest --test-dir build --output-on-failure
+```
+
+## 运行
+
+标准 Qt 安装环境：
+
+```bash
+./build/MiniTreasureBox
+```
+
+本开发环境：
+
+```bash
+LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysroot/usr/lib64 \
+  ./build/MiniTreasureBox
+```
+
 ## 项目文档
 
 - [产品文档](docs/product/product-requirements.md)
