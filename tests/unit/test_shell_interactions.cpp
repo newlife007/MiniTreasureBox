@@ -6,6 +6,8 @@
 #include "domain/tools/tool_logic.h"
 #include "domain/tools/tool_widgets.h"
 #include "ui/pages/home_page.h"
+#include "ui/widgets/tool_card.h"
+#include "ui/widgets/tool_grid.h"
 
 #include <QApplication>
 #include <QComboBox>
@@ -18,7 +20,6 @@
 #include <QTemporaryDir>
 #include <QTextEdit>
 #include <QTest>
-#include <QTreeWidget>
 
 #include <memory>
 
@@ -77,29 +78,27 @@ void ShellInteractionsTest::searchIntersectsActiveView()
 
     HomePage page(registry, settings, history);
     auto* search = page.findChild<QLineEdit*>(QStringLiteral("globalSearch"));
-    auto* tools = page.findChild<QTreeWidget*>(QStringLiteral("toolList"));
+    auto* grid = page.findChild<ToolGrid*>(QStringLiteral("toolGrid"));
     QVERIFY(search);
-    QVERIFY(tools);
+    QVERIFY(grid);
 
     page.showFavorites();
     search->setText(QStringLiteral("JSON"));
-    QCOMPARE(tools->topLevelItemCount(), 0);
+    QCOMPARE(grid->cardCount(), 0);
     search->setText(QStringLiteral("Base64"));
-    QCOMPARE(tools->topLevelItemCount(), 1);
-    QCOMPARE(tools->topLevelItem(0)->data(0, Qt::UserRole).toString(),
-             QStringLiteral("base64-codec"));
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("base64-codec")});
 
     page.showCategory(QStringLiteral("开发工具"));
     search->setText(QStringLiteral("Base64"));
-    QCOMPARE(tools->topLevelItemCount(), 0);
+    QCOMPARE(grid->cardCount(), 0);
     search->setText(QStringLiteral("UUID"));
-    QCOMPARE(tools->topLevelItemCount(), 1);
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("uuid-generator")});
 
     page.showRecent();
     search->setText(QStringLiteral("Base64"));
-    QCOMPARE(tools->topLevelItemCount(), 0);
+    QCOMPARE(grid->cardCount(), 0);
     search->setText(QStringLiteral("JSON"));
-    QCOMPARE(tools->topLevelItemCount(), 1);
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("json-formatter")});
 }
 
 void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
@@ -118,29 +117,29 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QCoreApplication::processEvents();
 
     auto* navigation = window.findChild<QListWidget*>(QStringLiteral("mainNavigation"));
-    auto* tools = window.findChild<QTreeWidget*>(QStringLiteral("toolList"));
+    auto* grid = window.findChild<ToolGrid*>(QStringLiteral("toolGrid"));
     auto* pages = window.findChild<QStackedWidget*>(QStringLiteral("mainPages"));
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearch"));
     QVERIFY(navigation);
-    QVERIFY(tools);
+    QVERIFY(grid);
     QVERIFY(pages);
     QVERIFY(search);
 
     QListWidgetItem* practical = itemWithText(navigation, QStringLiteral("实用工具"));
     QVERIFY(practical);
     clickItem(navigation, practical);
-    QCOMPARE(tools->topLevelItemCount(), 6);
+    QCOMPARE(grid->cardCount(), 6);
 
     QListWidgetItem* favorites = itemWithText(navigation, QStringLiteral("收藏"));
     QVERIFY(favorites);
     clickItem(navigation, favorites);
-    QCOMPARE(tools->topLevelItemCount(), 1);
-    QCOMPARE(tools->topLevelItem(0)->data(0, Qt::UserRole).toString(),
-             QStringLiteral("json-formatter"));
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("json-formatter")});
 
-    QTreeWidgetItem* favoriteTool = tools->topLevelItem(0);
-    tools->setCurrentItem(favoriteTool);
-    tools->itemDoubleClicked(favoriteTool, 0);
+    ToolCard* favoriteTool = grid->cardForTool(QStringLiteral("json-formatter"));
+    QVERIFY(favoriteTool);
+    auto* openButton = favoriteTool->findChild<QPushButton*>(QStringLiteral("openButton"));
+    QVERIFY(openButton);
+    openButton->click();
     QCoreApplication::processEvents();
     QCOMPARE(history.recentToolIds().value(0), QStringLiteral("json-formatter"));
     QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("toolPage_json-formatter"));
@@ -153,9 +152,9 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QListWidgetItem* recent = itemWithText(navigation, QStringLiteral("最近使用"));
     QVERIFY(recent);
     clickItem(navigation, recent);
-    QCOMPARE(tools->topLevelItemCount(), 1);
-    QCOMPARE(tools->topLevelItem(0)->data(0, Qt::UserRole).toString(),
-             QStringLiteral("json-formatter"));
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("json-formatter")});
+    ToolCard* themedCard = grid->cardForTool(QStringLiteral("json-formatter"));
+    QVERIFY(themedCard);
 
     QListWidgetItem* settingsItem = itemWithText(navigation, QStringLiteral("设置"));
     QVERIFY(settingsItem);
@@ -164,8 +163,11 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     auto* themeSelector = window.findChild<QComboBox*>(QStringLiteral("themeSelector"));
     QVERIFY(themeSelector);
     themeSelector->setCurrentIndex(themeSelector->findData(static_cast<int>(Theme::Dark)));
+    QCoreApplication::processEvents();
     QCOMPARE(settings.theme(), Theme::Dark);
     QCOMPARE(QApplication::palette().color(QPalette::Window), QColor(45, 45, 48));
+    QVERIFY(themedCard->palette().color(QPalette::WindowText).lightness()
+            > themedCard->palette().color(QPalette::Base).lightness());
 
     QTest::keyClick(&window, Qt::Key_K, Qt::ControlModifier);
     QCoreApplication::processEvents();

@@ -31,6 +31,10 @@ add_library(minitreasurebox_foundation STATIC
     src/domain/tools/tool_widgets.h
     src/ui/pages/home_page.cpp
     src/ui/pages/home_page.h
+    src/ui/widgets/tool_card.cpp
+    src/ui/widgets/tool_card.h
+    src/ui/widgets/tool_grid.cpp
+    src/ui/widgets/tool_grid.h
 )
 
 target_include_directories(minitreasurebox_foundation PUBLIC src)
@@ -75,7 +79,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_shell_interactions PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME shell_interactions COMMAND test_shell_interactions)
 
-    set_tests_properties(tool_logic shell_interactions PROPERTIES
+    add_executable(test_tool_cards tests/unit/test_tool_cards.cpp)
+    target_link_libraries(test_tool_cards PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME tool_cards COMMAND test_tool_cards)
+
+    set_tests_properties(tool_logic shell_interactions tool_cards PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()
