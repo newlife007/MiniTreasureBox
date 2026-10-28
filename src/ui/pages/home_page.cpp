@@ -153,6 +153,11 @@ void HomePage::focusSearch()
     search_->selectAll();
 }
 
+void HomePage::clearSearch()
+{
+    search_->clear();
+}
+
 QList<ToolMetadata> HomePage::visibleTools() const
 {
     const QString query = search_->text().trimmed();

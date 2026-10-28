@@ -30,6 +30,7 @@ public:
     void showRecent();
     void refresh();
     void focusSearch();
+    void clearSearch();
 
 signals:
     void toolOpenRequested(const QString& toolId);

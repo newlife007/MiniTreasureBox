@@ -15,6 +15,7 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSet>
+#include <QShortcut>
 #include <QStackedWidget>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -74,6 +75,26 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
     connect(homePage_, &HomePage::toolOpenRequested, this, &MainWindow::openTool);
     connect(homePage_, &HomePage::favoriteChanged, this,
             [this] { homePage_->refresh(); });
+
+    auto* searchShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_K), this);
+    searchShortcut->setContext(Qt::ApplicationShortcut);
+    connect(searchShortcut, &QShortcut::activated, this, [this] {
+        pages_->setCurrentWidget(homePage_);
+        navigation_->setCurrentRow(0);
+        homePage_->showHome();
+        homePage_->focusSearch();
+    });
+    auto* escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
+    escapeShortcut->setContext(Qt::ApplicationShortcut);
+    connect(escapeShortcut, &QShortcut::activated, this, [this] {
+        if (pages_->currentWidget() != homePage_) {
+            returnHome();
+        } else {
+            homePage_->clearSearch();
+            homePage_->showHome();
+            navigation_->setCurrentRow(0);
+        }
+    });
 
     if (navigation_->count() > 0) {
         navigation_->setCurrentRow(0);
@@ -199,17 +220,19 @@ void MainWindow::showToolOverview(const QString& toolId)
 
     const ToolMetadata metadata = tool->metadata();
     toolPage_ = new QWidget(pages_);
+    toolPage_->setObjectName(QStringLiteral("toolPage_%1").arg(metadata.id));
     auto* heading = new QLabel(metadata.name, toolPage_);
     QFont font = heading->font();
     font.setPointSize(18);
     font.setBold(true);
     heading->setFont(font);
-    auto* category = new QLabel(tr("分类：%1").arg(metadata.category), toolPage_);
     auto* description = new QLabel(metadata.description, toolPage_);
     description->setWordWrap(true);
+    auto* category = new QLabel(tr("分类：%1").arg(metadata.category), toolPage_);
     auto* localState = new QLabel(metadata.requiresNetwork ? tr("需要网络连接") : tr("完全本地运行"), toolPage_);
 
     auto* favoriteButton = new QPushButton(toolPage_);
+    favoriteButton->setToolTip(tr("切换此工具的收藏状态"));
     const auto updateFavoriteLabel = [this, favoriteButton, toolId] {
         favoriteButton->setText(settings_.isFavorite(toolId) ? tr("取消收藏") : tr("收藏工具"));
     };
@@ -222,23 +245,37 @@ void MainWindow::showToolOverview(const QString& toolId)
             });
 
     auto* backButton = new QPushButton(tr("返回首页"), toolPage_);
-    connect(backButton, &QPushButton::clicked, this, [this] {
-        pages_->setCurrentWidget(homePage_);
-        navigation_->setCurrentRow(0);
-        homePage_->showHome();
-    });
+    backButton->setToolTip(tr("返回工具首页（Esc）"));
+    connect(backButton, &QPushButton::clicked, this, &MainWindow::returnHome);
+
+    auto* headerActions = new QHBoxLayout;
+    headerActions->addWidget(category);
+    headerActions->addWidget(localState);
+    headerActions->addStretch();
+    headerActions->addWidget(favoriteButton);
 
     auto* layout = new QVBoxLayout(toolPage_);
     layout->addWidget(heading);
-    layout->addWidget(category);
     layout->addWidget(description);
-    layout->addWidget(localState);
-    layout->addWidget(favoriteButton, 0, Qt::AlignLeft);
-    layout->addStretch();
+    layout->addLayout(headerActions);
+    if (QWidget* content = tool->createWidget(toolPage_)) {
+        layout->addWidget(content, 1);
+    } else {
+        auto* unavailable = new QLabel(tr("此工具暂时没有可用界面。"), toolPage_);
+        unavailable->setWordWrap(true);
+        layout->addWidget(unavailable, 1);
+    }
     layout->addWidget(backButton, 0, Qt::AlignLeft);
 
     pages_->addWidget(toolPage_);
     pages_->setCurrentWidget(toolPage_);
+}
+
+void MainWindow::returnHome()
+{
+    pages_->setCurrentWidget(homePage_);
+    navigation_->setCurrentRow(0);
+    homePage_->showHome();
 }
 
 void MainWindow::applyTheme(Theme theme)

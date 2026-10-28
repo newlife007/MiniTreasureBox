@@ -4,6 +4,7 @@
 #include "core/settings.h"
 #include "core/tool_history.h"
 #include "core/tool_registry.h"
+#include "domain/tools/builtin_tools.h"
 
 #include <QSettings>
 
@@ -27,6 +28,7 @@ int Application::run()
     settings_ = std::make_unique<Settings>(*storage_);
     history_ = std::make_unique<ToolHistory>(*storage_);
     registry_ = std::make_unique<ToolRegistry>();
+    registerBuiltinTools(*registry_);
     mainWindow_ = std::make_unique<MainWindow>(*registry_, *settings_, *history_);
     mainWindow_->show();
     return exec();

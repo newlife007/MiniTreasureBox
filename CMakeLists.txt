@@ -23,6 +23,12 @@ add_library(minitreasurebox_foundation STATIC
     src/core/tool_history.h
     src/core/tool_registry.cpp
     src/core/tool_registry.h
+    src/domain/tools/builtin_tools.cpp
+    src/domain/tools/builtin_tools.h
+    src/domain/tools/tool_logic.cpp
+    src/domain/tools/tool_logic.h
+    src/domain/tools/tool_widgets.cpp
+    src/domain/tools/tool_widgets.h
     src/ui/pages/home_page.cpp
     src/ui/pages/home_page.h
 )
@@ -44,4 +50,8 @@ if(BUILD_TESTING)
     add_executable(test_settings_history tests/unit/test_settings_history.cpp)
     target_link_libraries(test_settings_history PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME settings_history COMMAND test_settings_history)
+
+    add_executable(test_tool_logic tests/unit/test_tool_logic.cpp)
+    target_link_libraries(test_tool_logic PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME tool_logic COMMAND test_tool_logic)
 endif()
