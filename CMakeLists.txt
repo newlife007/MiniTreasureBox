@@ -49,6 +49,11 @@ set_target_properties(MiniTreasureBox PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
+if(APPLE)
+    set_property(TARGET MiniTreasureBox PROPERTY
+        INSTALL_RPATH "@executable_path/../Frameworks"
+    )
+endif()
 
 include(CTest)
 if(BUILD_TESTING)
