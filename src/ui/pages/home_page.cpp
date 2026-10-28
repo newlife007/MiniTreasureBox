@@ -43,6 +43,11 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     , recentList_(createSectionList(this))
 {
     heading_->setObjectName(QStringLiteral("pageHeading"));
+    search_->setObjectName(QStringLiteral("globalSearch"));
+    resultState_->setObjectName(QStringLiteral("resultState"));
+    toolList_->setObjectName(QStringLiteral("toolList"));
+    favoritesList_->setObjectName(QStringLiteral("favoritesList"));
+    recentList_->setObjectName(QStringLiteral("recentList"));
     QFont headingFont = heading_->font();
     headingFont.setPointSize(18);
     headingFont.setBold(true);
@@ -111,23 +116,28 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
 void HomePage::showHome()
 {
     view_ = View::All;
-    category_.clear();
+    categories_.clear();
     heading_->setText(tr("工具首页"));
     refreshToolList();
 }
 
 void HomePage::showCategory(const QString& category)
 {
+    showCategories(category, {category});
+}
+
+void HomePage::showCategories(const QString& heading, const QStringList& categories)
+{
     view_ = View::Category;
-    category_ = category;
-    heading_->setText(tr("分类：%1").arg(category));
+    categories_ = categories;
+    heading_->setText(tr("分类：%1").arg(heading));
     refreshToolList();
 }
 
 void HomePage::showFavorites()
 {
     view_ = View::Favorites;
-    category_.clear();
+    categories_.clear();
     heading_->setText(tr("收藏工具"));
     refreshToolList();
 }
@@ -135,7 +145,7 @@ void HomePage::showFavorites()
 void HomePage::showRecent()
 {
     view_ = View::Recent;
-    category_.clear();
+    categories_.clear();
     heading_->setText(tr("最近使用"));
     refreshToolList();
 }
@@ -160,18 +170,13 @@ void HomePage::clearSearch()
 
 QList<ToolMetadata> HomePage::visibleTools() const
 {
-    const QString query = search_->text().trimmed();
-    QList<ToolMetadata> candidates = registry_.search(query);
-    if (!query.isEmpty()) {
-        return candidates;
-    }
-
+    const QList<ToolMetadata> candidates = registry_.search(search_->text().trimmed());
     QList<ToolMetadata> filtered;
     const QStringList favorites = settings_.favoriteToolIds();
     const QStringList recent = history_.recentToolIds();
     for (const ToolMetadata& metadata : candidates) {
         const bool include = view_ == View::All
-            || (view_ == View::Category && metadata.category == category_)
+            || (view_ == View::Category && categories_.contains(metadata.category))
             || (view_ == View::Favorites && favorites.contains(metadata.id))
             || (view_ == View::Recent && recent.contains(metadata.id));
         if (include) {

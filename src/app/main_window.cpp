@@ -18,6 +18,7 @@
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QStyle>
+#include <QVariant>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 
@@ -29,7 +30,7 @@ constexpr int kViewRole = Qt::UserRole;
 constexpr int kCategoryRole = Qt::UserRole + 1;
 
 QListWidgetItem* addNavigationItem(QListWidget* list, const QString& text,
-                                   const QString& view, const QString& category = {})
+                                   const QString& view, const QVariant& category = {})
 {
     auto* item = new QListWidgetItem(text, list);
     item->setData(kViewRole, view);
@@ -50,6 +51,7 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
 {
     setWindowTitle(tr("小小百宝箱"));
     navigation_->setObjectName(QStringLiteral("mainNavigation"));
+    pages_->setObjectName(QStringLiteral("mainPages"));
     navigation_->setMaximumWidth(190);
     navigation_->setMinimumWidth(150);
     navigation_->setSpacing(2);
@@ -121,17 +123,24 @@ void MainWindow::buildNavigation()
 {
     addNavigationItem(navigation_, tr("首页"), QStringLiteral("home"));
 
-    QStringList categories{tr("AI 工具"), tr("实用工具"), tr("小游戏")};
-    QSet<QString> categorySet(categories.begin(), categories.end());
+    QSet<QString> categorySet;
     for (const auto& tool : registry_.all()) {
         if (!tool->metadata().category.trimmed().isEmpty()) {
             categorySet.insert(tool->metadata().category);
         }
     }
-    categories = QStringList(categorySet.begin(), categorySet.end());
+    QStringList categories(categorySet.begin(), categorySet.end());
     categories.sort(Qt::CaseInsensitive);
+
+    addNavigationItem(navigation_, tr("AI 工具"), QStringLiteral("category"),
+                      tr("AI 工具"));
+    addNavigationItem(navigation_, tr("实用工具"), QStringLiteral("categories"),
+                      categories);
+    addNavigationItem(navigation_, tr("小游戏"), QStringLiteral("category"),
+                      tr("小游戏"));
     for (const QString& category : categories) {
-        addNavigationItem(navigation_, category, QStringLiteral("category"), category);
+        addNavigationItem(navigation_, QStringLiteral("  %1").arg(category),
+                          QStringLiteral("category"), category);
     }
 
     addNavigationItem(navigation_, tr("收藏"), QStringLiteral("favorites"));
@@ -142,6 +151,7 @@ void MainWindow::buildNavigation()
 QWidget* MainWindow::createSettingsPage()
 {
     auto* page = new QWidget(this);
+    page->setObjectName(QStringLiteral("settingsPage"));
     auto* heading = new QLabel(tr("设置"), page);
     QFont font = heading->font();
     font.setPointSize(18);
@@ -149,6 +159,7 @@ QWidget* MainWindow::createSettingsPage()
     heading->setFont(font);
 
     themeSelector_ = new QComboBox(page);
+    themeSelector_->setObjectName(QStringLiteral("themeSelector"));
     themeSelector_->addItem(tr("跟随系统"), static_cast<int>(Theme::System));
     themeSelector_->addItem(tr("浅色"), static_cast<int>(Theme::Light));
     themeSelector_->addItem(tr("深色"), static_cast<int>(Theme::Dark));
@@ -185,7 +196,10 @@ void MainWindow::handleNavigation(QListWidgetItem* item)
     }
 
     pages_->setCurrentWidget(homePage_);
-    if (view == QStringLiteral("category")) {
+    if (view == QStringLiteral("categories")) {
+        homePage_->showCategories(item->text().trimmed(),
+                                  item->data(kCategoryRole).toStringList());
+    } else if (view == QStringLiteral("category")) {
         homePage_->showCategory(item->data(kCategoryRole).toString());
     } else if (view == QStringLiteral("favorites")) {
         homePage_->showFavorites();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QStringList>
 #include <QWidget>
 
 #include "core/tool.h"
@@ -26,6 +27,7 @@ public:
 
     void showHome();
     void showCategory(const QString& category);
+    void showCategories(const QString& heading, const QStringList& categories);
     void showFavorites();
     void showRecent();
     void refresh();
@@ -55,7 +57,7 @@ private:
     Settings& settings_;
     ToolHistory& history_;
     View view_{View::All};
-    QString category_;
+    QStringList categories_;
     bool refreshing_{false};
 
     QLabel* heading_;

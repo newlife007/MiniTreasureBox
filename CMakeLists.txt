@@ -54,4 +54,12 @@ if(BUILD_TESTING)
     add_executable(test_tool_logic tests/unit/test_tool_logic.cpp)
     target_link_libraries(test_tool_logic PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME tool_logic COMMAND test_tool_logic)
+
+    add_executable(test_shell_interactions tests/unit/test_shell_interactions.cpp)
+    target_link_libraries(test_shell_interactions PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME shell_interactions COMMAND test_shell_interactions)
+
+    set_tests_properties(tool_logic shell_interactions PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
 endif()

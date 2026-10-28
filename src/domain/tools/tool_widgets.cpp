@@ -176,11 +176,14 @@ QWidget* createTimestampWidget(QWidget* parent)
     input->setObjectName(QStringLiteral("timestampInput"));
     input->setPlaceholderText(QWidget::tr("例如：1704067200"));
     auto* unit = new QComboBox(page);
+    unit->setObjectName(QStringLiteral("timestampUnit"));
     unit->addItem(QWidget::tr("秒"), static_cast<int>(TimestampUnit::Seconds));
     unit->addItem(QWidget::tr("毫秒"), static_cast<int>(TimestampUnit::Milliseconds));
     auto* utcOutput = new QLineEdit(page);
+    utcOutput->setObjectName(QStringLiteral("utcOutput"));
     utcOutput->setReadOnly(true);
     auto* localOutput = new QLineEdit(page);
+    localOutput->setObjectName(QStringLiteral("localOutput"));
     localOutput->setReadOnly(true);
     auto* error = createErrorLabel(page);
     auto* convertButton = actionButton(QWidget::tr("转换"), QWidget::tr("转换 Unix 时间戳"), page);
@@ -262,10 +265,15 @@ QWidget* createTextStatisticsWidget(QWidget* parent)
     input->setObjectName(QStringLiteral("toolInput"));
     input->setPlaceholderText(QWidget::tr("输入需要统计的文本"));
     auto* characters = new QLabel(QStringLiteral("0"), page);
+    characters->setObjectName(QStringLiteral("characterCount"));
     auto* nonWhitespace = new QLabel(QStringLiteral("0"), page);
+    nonWhitespace->setObjectName(QStringLiteral("nonWhitespaceCount"));
     auto* words = new QLabel(QStringLiteral("0"), page);
+    words->setObjectName(QStringLiteral("wordCount"));
     auto* lines = new QLabel(QStringLiteral("0"), page);
+    lines->setObjectName(QStringLiteral("lineCount"));
     auto* bytes = new QLabel(QStringLiteral("0"), page);
+    bytes->setObjectName(QStringLiteral("byteCount"));
     auto update = [=] {
         const TextStatistics result = TextStatisticsLogic::calculate(input->toPlainText());
         characters->setText(QString::number(result.characters));

@@ -6,7 +6,7 @@
 
 当前桌面应用已提供：
 
-- Qt 6 Widgets 桌面窗口，以及首页、分类、收藏、最近使用和设置导航。
+- Qt 6 Widgets 桌面窗口，以及首页、分类、收藏、最近使用和设置导航；“实用工具”会汇总第一阶段的全部六个本地工具，并保留具体分类入口。
 - 基于统一 `ToolMetadata`/`ITool` 接口的六个离线工具：JSON 格式化与校验、Base64 编解码、URL 百分号编解码、Unix 时间戳转换、UUID 生成器和文本统计。
 - 按名称、分类、描述、关键词和别名进行全局搜索；使用 `Ctrl+K`（macOS 为 `Cmd+K`）聚焦搜索，使用 `Esc` 清除搜索或返回首页。
 - 使用 QSettings 持久化收藏、最近使用、主题和窗口布局。
@@ -38,6 +38,8 @@ cmake --build build --parallel
 LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysroot/usr/lib64 \
   ctest --test-dir build --output-on-failure
 ```
+
+CMake 会为需要创建 Qt 窗口的测试自动设置 `QT_QPA_PLATFORM=offscreen`，因此上述 CTest 命令可直接在无显示服务器的环境中运行。
 
 ## 运行
 
