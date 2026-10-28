@@ -85,11 +85,38 @@ jobs:
             throw "Installer exited with code $($installResult.ExitCode)."
           }
 
-          $applicationPath = Join-Path $installDirectory 'MiniTreasureBox.exe'
-          if (-not (Test-Path $applicationPath)) {
-            throw "Installed application was not found at $applicationPath."
+          $binaryDirectory = Join-Path $installDirectory 'bin'
+          $applicationPath = Join-Path $binaryDirectory 'MiniTreasureBox.exe'
+          $rootApplicationPath = Join-Path $installDirectory 'MiniTreasureBox.exe'
+          if (Test-Path -PathType Leaf $rootApplicationPath) {
+            throw "Application must not be installed at $rootApplicationPath."
           }
-          $application = Start-Process -FilePath $applicationPath -PassThru
+
+          $requiredRuntimeFiles = @(
+            $applicationPath
+            (Join-Path $binaryDirectory 'Qt6Core.dll')
+            (Join-Path $binaryDirectory 'Qt6Gui.dll')
+            (Join-Path $binaryDirectory 'Qt6Widgets.dll')
+          )
+          foreach ($runtimeFile in $requiredRuntimeFiles) {
+            if (-not (Test-Path -PathType Leaf $runtimeFile)) {
+              throw "Required installed runtime file was not found at $runtimeFile."
+            }
+          }
+
+          $originalPath = $env:PATH
+          try {
+            $env:PATH = @(
+              (Join-Path $env:SystemRoot 'System32')
+              $env:SystemRoot
+              (Join-Path $env:SystemRoot 'System32\Wbem')
+              (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+            ) -join ';'
+            $application = Start-Process -FilePath $applicationPath -PassThru
+          }
+          finally {
+            $env:PATH = $originalPath
+          }
           Start-Sleep -Seconds 5
           if ($application.HasExited) {
             throw "Installed application exited during startup with code $($application.ExitCode)."
@@ -98,7 +125,7 @@ jobs:
           $application.WaitForExit()
 
           $uninstallerPath = Join-Path $installDirectory 'Uninstall.exe'
-          if (-not (Test-Path $uninstallerPath)) {
+          if (-not (Test-Path -PathType Leaf $uninstallerPath)) {
             throw "Uninstaller was not found at $uninstallerPath."
           }
           $uninstallResult = Start-Process -FilePath $uninstallerPath `
@@ -109,8 +136,10 @@ jobs:
           for ($attempt = 0; $attempt -lt 30 -and (Test-Path $applicationPath); $attempt++) {
             Start-Sleep -Milliseconds 500
           }
-          if (Test-Path $applicationPath) {
-            throw 'Application remains after silent uninstall.'
+          foreach ($runtimeFile in $requiredRuntimeFiles) {
+            if (Test-Path $runtimeFile) {
+              throw "Runtime file remains after silent uninstall: $runtimeFile"
+            }
           }
       - name: Upload unsigned Windows preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

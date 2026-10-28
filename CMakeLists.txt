@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(MiniTreasureBox VERSION 0.1.0 LANGUAGES CXX)
+project(MiniTreasureBox VERSION 0.1.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,7 +84,7 @@ include(GNUInstallDirs)
 if(APPLE)
     install(TARGETS MiniTreasureBox BUNDLE DESTINATION .)
 elseif(WIN32)
-    install(TARGETS MiniTreasureBox RUNTIME DESTINATION .)
+    install(TARGETS MiniTreasureBox RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 else()
     install(TARGETS MiniTreasureBox RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 endif()
