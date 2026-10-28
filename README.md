@@ -56,6 +56,41 @@ LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysr
   ./build/MiniTreasureBox
 ```
 
+## 创建安装包
+
+安装包必须在对应的原生操作系统上构建，并确保 CMake 可以找到 Qt 6.8.3。
+
+Windows 使用 Visual Studio 2022 和 NSIS：
+
+```powershell
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
+cpack --config build/CPackConfig.cmake -C Release -G NSIS
+```
+
+生成的安装程序为 `build/packages/MiniTreasureBox-0.1.0-windows-x64.exe`，其中包含应用程序和运行所需的 Qt 库及插件。
+
+macOS 使用 Qt 的 `clang_64` 工具链：
+
+```bash
+cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+ctest --test-dir build --output-on-failure
+cpack --config build/CPackConfig.cmake -C Release -G DragNDrop
+```
+
+生成的磁盘映像为 `build/packages/MiniTreasureBox-0.1.0-macos.dmg`，其中包含可部署的 `MiniTreasureBox.app` 和运行所需的 Qt 库及插件。
+
+GitHub Actions 的 **Build release packages** 工作流也可以手动运行。手动运行会保留 Windows 和 macOS 安装包各 14 天，可从该次工作流的 Artifacts 区域下载，但不会创建 GitHub Release。发布新版本时，先确保 `CMakeLists.txt` 中的项目版本正确，再推送同版本的 `v` 前缀标签，例如：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+`v*` 标签会触发两个原生平台的构建和测试，并将 `.exe` 与 `.dmg` 同时发布到该标签对应的 GitHub Release。
+
 ## 项目文档
 
 - [产品文档](docs/product/product-requirements.md)

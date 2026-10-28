@@ -16,7 +16,7 @@ Application::Application(int& argc, char** argv)
     QCoreApplication::setOrganizationName(QStringLiteral("MiniTreasureBox"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("minitreasurebox.local"));
     QCoreApplication::setApplicationName(QStringLiteral("MiniTreasureBox"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+    QCoreApplication::setApplicationVersion(QStringLiteral(MINITREASUREBOX_VERSION));
     setQuitOnLastWindowClosed(true);
 }
 

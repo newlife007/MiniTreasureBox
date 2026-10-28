@@ -34,10 +34,21 @@ add_library(minitreasurebox_foundation STATIC
 )
 
 target_include_directories(minitreasurebox_foundation PUBLIC src)
+target_compile_definitions(minitreasurebox_foundation PRIVATE
+    MINITREASUREBOX_VERSION="${PROJECT_VERSION}"
+)
 target_link_libraries(minitreasurebox_foundation PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets)
 
 add_executable(MiniTreasureBox src/main.cpp)
 target_link_libraries(MiniTreasureBox PRIVATE minitreasurebox_foundation)
+set_target_properties(MiniTreasureBox PROPERTIES
+    WIN32_EXECUTABLE TRUE
+    MACOSX_BUNDLE TRUE
+    MACOSX_BUNDLE_BUNDLE_NAME "${PROJECT_NAME}"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "com.newlife007.minitreasurebox"
+    MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -62,4 +73,43 @@ if(BUILD_TESTING)
     set_tests_properties(tool_logic shell_interactions PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
+endif()
+
+include(GNUInstallDirs)
+if(APPLE)
+    install(TARGETS MiniTreasureBox BUNDLE DESTINATION .)
+elseif(WIN32)
+    install(TARGETS MiniTreasureBox RUNTIME DESTINATION .)
+else()
+    install(TARGETS MiniTreasureBox RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+
+if(WIN32 OR APPLE)
+    qt_generate_deploy_app_script(
+        TARGET MiniTreasureBox
+        OUTPUT_SCRIPT deploy_script
+        NO_UNSUPPORTED_PLATFORM_ERROR
+    )
+    install(SCRIPT "${deploy_script}")
+
+    set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
+    set(CPACK_PACKAGE_VENDOR "MiniTreasureBox")
+    set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MiniTreasureBox desktop utilities")
+    set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+
+    if(WIN32)
+        set(CPACK_GENERATOR "NSIS")
+        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-windows-x64")
+        set(CPACK_PACKAGE_INSTALL_DIRECTORY "${PROJECT_NAME} ${PROJECT_VERSION}")
+        set(CPACK_PACKAGE_EXECUTABLES "MiniTreasureBox" "MiniTreasureBox")
+        set(CPACK_NSIS_DISPLAY_NAME "${PROJECT_NAME} ${PROJECT_VERSION}")
+        set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    else()
+        set(CPACK_GENERATOR "DragNDrop")
+        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-macos")
+        set(CPACK_DMG_VOLUME_NAME "${PROJECT_NAME} ${PROJECT_VERSION}")
+    endif()
+
+    include(CPack)
 endif()
