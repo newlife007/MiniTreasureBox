@@ -1,0 +1,243 @@
+name: Build release packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  validate-release-version:
+    name: Validate release version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Require tag to match CMake project version
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: |
+          project_version="$(python3 - <<'PY'
+          import pathlib
+          import re
+
+          contents = pathlib.Path("CMakeLists.txt").read_text(encoding="utf-8")
+          match = re.search(
+              r"project\s*\(\s*MiniTreasureBox\s+VERSION\s+([0-9]+(?:\.[0-9]+){0,3})(?=\s|\))",
+              contents,
+          )
+          if match is None:
+              raise SystemExit("Could not determine MiniTreasureBox PROJECT_VERSION")
+          print(match.group(1))
+          PY
+          )"
+          if [[ -n "$RELEASE_TAG" && "$RELEASE_TAG" != "v${project_version}" ]]; then
+            echo "Release tag must exactly match v${project_version}; received ${RELEASE_TAG}." >&2
+            exit 1
+          fi
+          echo "Validated project version ${project_version}."
+
+  package-windows:
+    name: Package Windows installer
+    needs: validate-release-version
+    runs-on: windows-2022
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Qt
+        uses: jurplel/install-qt-action@bcb88e3bed2e992f5f9e24c0f9e364a231d278eb # v4.4.0
+        with:
+          version: '6.8.3'
+          arch: win64_msvc2022_64
+          cache: false
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Create NSIS installer
+        run: cpack --config build/CPackConfig.cmake -C Release -G NSIS
+      - name: Smoke test install, startup, and removal
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installers = @(Get-ChildItem 'build/packages/*.exe')
+          if ($installers.Count -ne 1) {
+            throw "Expected exactly one NSIS installer, found $($installers.Count)."
+          }
+
+          $installDirectory = Join-Path $env:RUNNER_TEMP 'MiniTreasureBox-smoke'
+          if ($installDirectory.Contains(' ')) {
+            throw 'NSIS silent /D paths cannot contain spaces.'
+          }
+          $installResult = Start-Process -FilePath $installers[0].FullName `
+            -ArgumentList @('/S', "/D=$installDirectory") -Wait -PassThru
+          if ($installResult.ExitCode -ne 0) {
+            throw "Installer exited with code $($installResult.ExitCode)."
+          }
+
+          $applicationPath = Join-Path $installDirectory 'MiniTreasureBox.exe'
+          if (-not (Test-Path $applicationPath)) {
+            throw "Installed application was not found at $applicationPath."
+          }
+          $application = Start-Process -FilePath $applicationPath -PassThru
+          Start-Sleep -Seconds 5
+          if ($application.HasExited) {
+            throw "Installed application exited during startup with code $($application.ExitCode)."
+          }
+          Stop-Process -Id $application.Id -Force
+          $application.WaitForExit()
+
+          $uninstallerPath = Join-Path $installDirectory 'Uninstall.exe'
+          if (-not (Test-Path $uninstallerPath)) {
+            throw "Uninstaller was not found at $uninstallerPath."
+          }
+          $uninstallResult = Start-Process -FilePath $uninstallerPath `
+            -ArgumentList '/S' -Wait -PassThru
+          if ($uninstallResult.ExitCode -ne 0) {
+            throw "Uninstaller exited with code $($uninstallResult.ExitCode)."
+          }
+          for ($attempt = 0; $attempt -lt 30 -and (Test-Path $applicationPath); $attempt++) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (Test-Path $applicationPath) {
+            throw 'Application remains after silent uninstall.'
+          }
+      - name: Upload unsigned Windows preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MiniTreasureBox-windows-unsigned-preview
+          path: build/packages/*.exe
+          if-no-files-found: error
+          retention-days: 14
+
+  package-macos:
+    name: Package macOS disk image
+    needs: validate-release-version
+    runs-on: macos-14
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Install Qt
+        uses: jurplel/install-qt-action@bcb88e3bed2e992f5f9e24c0f9e364a231d278eb # v4.4.0
+        with:
+          version: '6.8.3'
+          arch: clang_64
+          cache: false
+      - name: Configure
+        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Create DragNDrop disk image
+        run: cpack --config build/CPackConfig.cmake -C Release -G DragNDrop
+      - name: Smoke test install, startup, and removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_path="$(find build/packages -maxdepth 1 -name '*.dmg' -print -quit)"
+          if [[ -z "$package_path" ]]; then
+            echo 'No DMG package was produced.' >&2
+            exit 1
+          fi
+
+          mount_point="$(mktemp -d)"
+          install_root="$(mktemp -d)"
+          application_pid=''
+          cleanup() {
+            if [[ -n "$application_pid" ]] && kill -0 "$application_pid" 2>/dev/null; then
+              kill "$application_pid" || true
+              wait "$application_pid" || true
+            fi
+            hdiutil detach "$mount_point" -quiet || true
+            rm -rf "$mount_point" "$install_root"
+          }
+          trap cleanup EXIT
+
+          hdiutil attach "$package_path" -nobrowse -readonly -mountpoint "$mount_point"
+          source_application="$(find "$mount_point" -maxdepth 1 -name '*.app' -print -quit)"
+          if [[ -z "$source_application" ]]; then
+            echo 'No application bundle was found in the DMG.' >&2
+            exit 1
+          fi
+
+          installed_application="$install_root/MiniTreasureBox.app"
+          ditto "$source_application" "$installed_application"
+          executable="$installed_application/Contents/MacOS/MiniTreasureBox"
+          if [[ ! -x "$executable" ]]; then
+            echo 'Installed application executable is missing.' >&2
+            exit 1
+          fi
+          "$executable" >"$RUNNER_TEMP/minitreasurebox-startup.log" 2>&1 &
+          application_pid=$!
+          sleep 5
+          if ! kill -0 "$application_pid" 2>/dev/null; then
+            wait "$application_pid" || true
+            cat "$RUNNER_TEMP/minitreasurebox-startup.log" >&2
+            echo 'Installed application exited during startup.' >&2
+            exit 1
+          fi
+          kill "$application_pid"
+          wait "$application_pid" || true
+          application_pid=''
+
+          rm -rf "$installed_application"
+          if [[ -e "$installed_application" ]]; then
+            echo 'Application remains after removal.' >&2
+            exit 1
+          fi
+          hdiutil detach "$mount_point" -quiet
+      - name: Upload unsigned macOS preview
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: MiniTreasureBox-macos-unsigned-preview
+          path: build/packages/*.dmg
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish unsigned preview release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - package-windows
+      - package-macos
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download unsigned Windows preview
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MiniTreasureBox-windows-unsigned-preview
+          path: installers/windows
+      - name: Download unsigned macOS preview
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MiniTreasureBox-macos-unsigned-preview
+          path: installers/macos
+      - name: Publish unsigned preview installers
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          name: ${{ github.ref_name }} unsigned preview
+          body: |
+            These preview installers are not code-signed. Windows may show an unknown publisher warning, and macOS Gatekeeper may block the app. Do not treat these files as production-signed releases.
+
+            Both packages passed native install, startup, and removal smoke tests in this workflow run.
+          prerelease: true
+          files: |
+            installers/windows/*.exe
+            installers/macos/*.dmg
+          fail_on_unmatched_files: true
+          generate_release_notes: true
