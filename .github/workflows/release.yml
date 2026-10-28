@@ -85,11 +85,78 @@ jobs:
             throw "Installer exited with code $($installResult.ExitCode)."
           }
 
-          $applicationPath = Join-Path $installDirectory 'MiniTreasureBox.exe'
-          if (-not (Test-Path $applicationPath)) {
-            throw "Installed application was not found at $applicationPath."
+          $binaryDirectory = Join-Path $installDirectory 'bin'
+          $applicationPath = Join-Path $binaryDirectory 'MiniTreasureBox.exe'
+          $rootApplicationPath = Join-Path $installDirectory 'MiniTreasureBox.exe'
+          if (Test-Path -PathType Leaf $rootApplicationPath) {
+            throw "Application must not be installed at $rootApplicationPath."
           }
-          $application = Start-Process -FilePath $applicationPath -PassThru
+
+          $requiredRuntimeFiles = @(
+            $applicationPath
+            (Join-Path $binaryDirectory 'Qt6Core.dll')
+            (Join-Path $binaryDirectory 'Qt6Gui.dll')
+            (Join-Path $binaryDirectory 'Qt6Widgets.dll')
+          )
+          foreach ($runtimeFile in $requiredRuntimeFiles) {
+            if (-not (Test-Path -PathType Leaf $runtimeFile)) {
+              throw "Required installed runtime file was not found at $runtimeFile."
+            }
+          }
+
+          $resolvedApplicationPath = (Resolve-Path -LiteralPath $applicationPath).Path
+          $programDirectories = @(
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
+            [Environment]::GetFolderPath([Environment+SpecialFolder]::CommonPrograms)
+          ) | Where-Object { $_ -and (Test-Path -LiteralPath $_ -PathType Container) }
+          $shell = New-Object -ComObject WScript.Shell
+          $matchingShortcuts = @(
+            foreach ($programDirectory in $programDirectories) {
+              foreach ($candidate in @(Get-ChildItem -LiteralPath $programDirectory `
+                  -Filter '*.lnk' -Recurse -Force -File)) {
+                $shortcut = $shell.CreateShortcut($candidate.FullName)
+                if ($shortcut.TargetPath -and
+                    [IO.Path]::GetFullPath($shortcut.TargetPath) -eq $resolvedApplicationPath) {
+                  $candidate.FullName
+                }
+              }
+            }
+          )
+          if ($matchingShortcuts.Count -ne 1) {
+            throw "Expected exactly one Start Menu shortcut targeting $resolvedApplicationPath, found $($matchingShortcuts.Count)."
+          }
+          $shortcutPath = $matchingShortcuts[0]
+
+          $existingProcessIds = @(
+            Get-Process -Name 'MiniTreasureBox' -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.Id }
+          )
+          $application = $null
+          $originalPath = $env:PATH
+          try {
+            $env:PATH = @(
+              (Join-Path $env:SystemRoot 'System32')
+              $env:SystemRoot
+              (Join-Path $env:SystemRoot 'System32\Wbem')
+              (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
+            ) -join ';'
+            Start-Process -FilePath $shortcutPath
+            for ($attempt = 0; $attempt -lt 20 -and $null -eq $application; $attempt++) {
+              Start-Sleep -Milliseconds 250
+              $application = Get-Process -Name 'MiniTreasureBox' -ErrorAction SilentlyContinue |
+                Where-Object {
+                  $existingProcessIds -notcontains $_.Id -and
+                  $_.Path -eq $resolvedApplicationPath
+                } |
+                Select-Object -First 1
+            }
+          }
+          finally {
+            $env:PATH = $originalPath
+          }
+          if ($null -eq $application) {
+            throw "The Start Menu shortcut did not launch $resolvedApplicationPath."
+          }
           Start-Sleep -Seconds 5
           if ($application.HasExited) {
             throw "Installed application exited during startup with code $($application.ExitCode)."
@@ -97,8 +164,16 @@ jobs:
           Stop-Process -Id $application.Id -Force
           $application.WaitForExit()
 
+          $installedFiles = @(
+            Get-ChildItem -LiteralPath $installDirectory -Recurse -Force -File |
+              ForEach-Object { $_.FullName }
+          )
+          if ($installedFiles.Count -eq 0) {
+            throw "No package-owned files were found under $installDirectory."
+          }
+
           $uninstallerPath = Join-Path $installDirectory 'Uninstall.exe'
-          if (-not (Test-Path $uninstallerPath)) {
+          if (-not (Test-Path -PathType Leaf $uninstallerPath)) {
             throw "Uninstaller was not found at $uninstallerPath."
           }
           $uninstallResult = Start-Process -FilePath $uninstallerPath `
@@ -106,11 +181,29 @@ jobs:
           if ($uninstallResult.ExitCode -ne 0) {
             throw "Uninstaller exited with code $($uninstallResult.ExitCode)."
           }
-          for ($attempt = 0; $attempt -lt 30 -and (Test-Path $applicationPath); $attempt++) {
+          for ($attempt = 0; $attempt -lt 30; $attempt++) {
+            $remainingInstalledFiles = @(
+              $installedFiles | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+            )
+            if ($remainingInstalledFiles.Count -eq 0 -and
+                -not (Test-Path -LiteralPath $shortcutPath -PathType Leaf)) {
+              break
+            }
             Start-Sleep -Milliseconds 500
           }
-          if (Test-Path $applicationPath) {
-            throw 'Application remains after silent uninstall.'
+          if ($remainingInstalledFiles.Count -ne 0) {
+            throw "Package-owned files remain after silent uninstall: $($remainingInstalledFiles -join ', ')"
+          }
+          if (Test-Path -LiteralPath $shortcutPath -PathType Leaf) {
+            throw "Start Menu shortcut remains after silent uninstall: $shortcutPath"
+          }
+          $unexpectedRemainingFiles = @(
+            Get-ChildItem -LiteralPath $installDirectory -Recurse -Force -File `
+              -ErrorAction SilentlyContinue |
+              ForEach-Object { $_.FullName }
+          )
+          if ($unexpectedRemainingFiles.Count -ne 0) {
+            throw "Unexpected files remain after silent uninstall: $($unexpectedRemainingFiles -join ', ')"
           }
       - name: Upload unsigned Windows preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
