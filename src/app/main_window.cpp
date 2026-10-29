@@ -130,6 +130,8 @@ void MainWindow::buildNavigation()
         }
     }
     QStringList categories(categorySet.begin(), categorySet.end());
+    categories.removeAll(tr("AI 工具"));
+    categories.removeAll(tr("小游戏"));
     categories.sort(Qt::CaseInsensitive);
 
     addNavigationItem(navigation_, tr("AI 工具"), QStringLiteral("category"),

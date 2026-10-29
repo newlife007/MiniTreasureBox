@@ -1,6 +1,9 @@
 #include "domain/tools/builtin_tools.h"
 
+#include "ai/handwriting_removal/removal_widget.h"
+#include "ai/ocr/ocr_widget.h"
 #include "core/tool_registry.h"
+#include "domain/games/game_widgets.h"
 #include "domain/tools/tool_widgets.h"
 
 #include <QWidget>
@@ -115,6 +118,90 @@ void registerBuiltinTools(ToolRegistry& registry)
          QStringLiteral("view-statistics"),
          false},
         tools::createTextStatisticsWidget);
+
+    add(registry,
+        {QStringLiteral("image-ocr"),
+         QStringLiteral("图片 OCR"),
+         QStringLiteral("AI 工具"),
+         QStringLiteral("使用单独安装的本地 Tesseract 和语言模型识别图片文字。"),
+         {QStringLiteral("ocr"), QStringLiteral("图片"), QStringLiteral("文字识别"),
+          QStringLiteral("tesseract"), QStringLiteral("image text")},
+         {QStringLiteral("Image OCR"), QStringLiteral("光学字符识别")},
+         QStringLiteral("insert-text"),
+         false},
+        ocr::createOcrWidget);
+
+    add(registry,
+        {QStringLiteral("exam-restoration"),
+         QStringLiteral("试卷复原小工具"),
+         QStringLiteral("AI 工具"),
+         QStringLiteral("使用保守的本地图像基线提出手写 Mask，并支持人工修正和背景填充。"),
+         {QStringLiteral("试卷复原"), QStringLiteral("去手写"), QStringLiteral("mask"),
+          QStringLiteral("handwriting"), QStringLiteral("exam restoration")},
+         {QStringLiteral("Handwriting removal"), QStringLiteral("试卷去手写")},
+         QStringLiteral("draw-eraser"),
+         false},
+        handwriting::createHandwritingRemovalWidget);
+
+    add(registry,
+        {QStringLiteral("guess-number"),
+         QStringLiteral("猜数字"),
+         QStringLiteral("小游戏"),
+         QStringLiteral("猜出 1 到 100 之间的本地随机数字。"),
+         {QStringLiteral("猜数字"), QStringLiteral("数字"), QStringLiteral("guess"),
+          QStringLiteral("number")},
+         {QStringLiteral("Guess Number"), QStringLiteral("数字猜谜")},
+         QStringLiteral("help-about"),
+         false},
+        games::createGuessNumberWidget);
+
+    add(registry,
+        {QStringLiteral("game-2048"),
+         QStringLiteral("2048"),
+         QStringLiteral("小游戏"),
+         QStringLiteral("移动并合并数字方块，挑战 2048。"),
+         {QStringLiteral("2048"), QStringLiteral("方块"), QStringLiteral("merge"),
+          QStringLiteral("puzzle")},
+         {QStringLiteral("2048 game"), QStringLiteral("数字方块")},
+         QStringLiteral("view-grid"),
+         false},
+        games::create2048Widget);
+
+    add(registry,
+        {QStringLiteral("snake"),
+         QStringLiteral("贪吃蛇"),
+         QStringLiteral("小游戏"),
+         QStringLiteral("使用键盘控制贪吃蛇成长并避开碰撞。"),
+         {QStringLiteral("贪吃蛇"), QStringLiteral("snake"), QStringLiteral("方向键"),
+          QStringLiteral("wasd")},
+         {QStringLiteral("Snake Game"), QStringLiteral("蛇")},
+         QStringLiteral("go-next"),
+         false},
+        games::createSnakeWidget);
+
+    add(registry,
+        {QStringLiteral("tetris"),
+         QStringLiteral("俄罗斯方块"),
+         QStringLiteral("小游戏"),
+         QStringLiteral("移动、旋转和下落方块以消除整行。"),
+         {QStringLiteral("俄罗斯方块"), QStringLiteral("tetris"), QStringLiteral("方块"),
+          QStringLiteral("消除")},
+         {QStringLiteral("Tetris Game"), QStringLiteral("落下方块")},
+         QStringLiteral("view-grid"),
+         false},
+        games::createTetrisWidget);
+
+    add(registry,
+        {QStringLiteral("gomoku"),
+         QStringLiteral("五子棋"),
+         QStringLiteral("小游戏"),
+         QStringLiteral("本地双人轮流落子，先连成五子者获胜。"),
+         {QStringLiteral("五子棋"), QStringLiteral("gomoku"), QStringLiteral("棋盘"),
+          QStringLiteral("five in a row")},
+         {QStringLiteral("Gomoku"), QStringLiteral("Five in a Row")},
+         QStringLiteral("applications-games"),
+         false},
+        games::createGomokuWidget);
 }
 
 }  // namespace mtb
