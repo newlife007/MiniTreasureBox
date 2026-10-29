@@ -12,6 +12,10 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
 add_library(minitreasurebox_foundation STATIC
+    src/ai/ocr/ocr_engine.cpp
+    src/ai/ocr/ocr_engine.h
+    src/ai/ocr/ocr_widget.cpp
+    src/ai/ocr/ocr_widget.h
     src/app/application.cpp
     src/app/application.h
     src/app/main_window.cpp
@@ -97,7 +101,20 @@ if(BUILD_TESTING)
     target_link_libraries(test_game_widgets PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME game_widgets COMMAND test_game_widgets)
 
-    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets PROPERTIES
+    add_executable(fake_tesseract tests/fixtures/fake_tesseract.cpp)
+    target_link_libraries(fake_tesseract PRIVATE Qt6::Core)
+
+    add_executable(test_ocr_engine tests/unit/test_ocr_engine.cpp)
+    target_link_libraries(test_ocr_engine PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_dependencies(test_ocr_engine fake_tesseract)
+    add_test(NAME ocr_engine COMMAND test_ocr_engine)
+
+    add_executable(test_ocr_widget tests/unit/test_ocr_widget.cpp)
+    target_link_libraries(test_ocr_widget PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_dependencies(test_ocr_widget fake_tesseract)
+    add_test(NAME ocr_widget COMMAND test_ocr_widget)
+
+    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets ocr_engine ocr_widget PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

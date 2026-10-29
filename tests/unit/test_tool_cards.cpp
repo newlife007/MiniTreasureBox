@@ -130,7 +130,7 @@ void ToolCardsTest::homeFiltersOrdersAndSynchronizesFavorites()
     page.show();
     auto* grid = page.findChild<ToolGrid*>(QStringLiteral("toolGrid"));
     QVERIFY(grid);
-    QCOMPARE(grid->cardCount(), 11);
+    QCOMPARE(grid->cardCount(), 12);
 
     page.showRecent();
     QCOMPARE(grid->toolIds().mid(0, 2),

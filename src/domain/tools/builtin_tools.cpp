@@ -1,5 +1,6 @@
 #include "domain/tools/builtin_tools.h"
 
+#include "ai/ocr/ocr_widget.h"
 #include "core/tool_registry.h"
 #include "domain/games/game_widgets.h"
 #include "domain/tools/tool_widgets.h"
@@ -116,6 +117,18 @@ void registerBuiltinTools(ToolRegistry& registry)
          QStringLiteral("view-statistics"),
          false},
         tools::createTextStatisticsWidget);
+
+    add(registry,
+        {QStringLiteral("image-ocr"),
+         QStringLiteral("图片 OCR"),
+         QStringLiteral("AI 工具"),
+         QStringLiteral("使用单独安装的本地 Tesseract 和语言模型识别图片文字。"),
+         {QStringLiteral("ocr"), QStringLiteral("图片"), QStringLiteral("文字识别"),
+          QStringLiteral("tesseract"), QStringLiteral("image text")},
+         {QStringLiteral("Image OCR"), QStringLiteral("光学字符识别")},
+         QStringLiteral("insert-text"),
+         false},
+        ocr::createOcrWidget);
 
     add(registry,
         {QStringLiteral("guess-number"),
