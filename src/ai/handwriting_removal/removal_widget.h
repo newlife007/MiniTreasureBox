@@ -2,6 +2,7 @@
 
 #include "ai/handwriting_removal/removal_engine.h"
 
+#include <QVector>
 #include <QWidget>
 
 #include <memory>
@@ -44,7 +45,10 @@ private:
     void chooseImage();
     void chooseExportPath();
     void finishAutomatic(quint64 taskId, const RemovalResult& result);
+    void finishResult(quint64 taskId, const RemovalResult& result);
     void refreshResult();
+    void cancelResultProcessing();
+    void trackWorker(QThread* thread);
     void refreshControls();
     void setBusy(bool busy);
     void showError(const QString& message);
@@ -62,8 +66,12 @@ private:
     QPushButton* undoButton_;
     QPushButton* redoButton_;
     QPushButton* exportButton_;
-    QThread* workerThread_{nullptr};
-    quint64 taskId_{0};
+    QVector<QThread*> workerThreads_;
+    QThread* automaticThread_{nullptr};
+    QThread* resultThread_{nullptr};
+    quint64 automaticTaskId_{0};
+    quint64 resultTaskId_{0};
+    bool resultPending_{false};
 };
 
 [[nodiscard]] QWidget* createHandwritingRemovalWidget(QWidget* parent = nullptr);

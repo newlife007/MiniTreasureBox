@@ -20,6 +20,7 @@ struct GuessResult {
 class GuessNumberGame {
 public:
     void start(int target);
+    void togglePause();
     [[nodiscard]] GuessResult guess(const QString& text);
     [[nodiscard]] int attempts() const { return attempts_; }
     [[nodiscard]] GameState state() const { return state_; }
@@ -33,8 +34,9 @@ class Game2048 {
 public:
     using Board = std::array<std::array<int, 4>, 4>;
     void start();
+    void start(int firstCell, int secondCell, int firstValue = 2, int secondValue = 2);
     void setBoard(const Board& board);
-    [[nodiscard]] bool move(Direction direction, int spawnCell = -1, int spawnValue = 2);
+    [[nodiscard]] bool move(Direction direction, int spawnCell = -1, int spawnValue = 0);
     [[nodiscard]] const Board& board() const { return board_; }
     [[nodiscard]] int score() const { return score_; }
     [[nodiscard]] bool hasWon() const;
@@ -75,9 +77,10 @@ public:
     static constexpr int Width = 10;
     static constexpr int Height = 20;
     using Board = std::array<std::array<int, Width>, Height>;
-    enum class Piece { I, O, T, L, S };
+    enum class Piece { I, O, T, L, J, S, Z };
 
-    void start(Piece piece = Piece::T);
+    void start();
+    void start(Piece piece);
     void setBoard(const Board& board) { board_ = board; }
     [[nodiscard]] bool move(int dx);
     [[nodiscard]] bool rotate();
@@ -88,8 +91,11 @@ public:
     [[nodiscard]] const Board& board() const { return board_; }
     [[nodiscard]] int score() const { return score_; }
     [[nodiscard]] int lines() const { return lines_; }
+    [[nodiscard]] Piece currentPiece() const { return piece_; }
     [[nodiscard]] GameState state() const { return state_; }
 private:
+    void reset();
+    void refillBag();
     [[nodiscard]] QVector<QPoint> cells(Piece piece, int rotation, QPoint origin) const;
     [[nodiscard]] bool fits(Piece piece, int rotation, QPoint origin) const;
     int lockAndClear();
@@ -100,7 +106,8 @@ private:
     int rotation_{0};
     int score_{0};
     int lines_{0};
-    int nextPiece_{0};
+    std::array<Piece, 7> bag_{};
+    int bagIndex_{7};
     GameState state_{GameState::Ready};
 };
 

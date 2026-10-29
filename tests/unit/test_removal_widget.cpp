@@ -73,6 +73,7 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     auto* clear = widget.findChild<QPushButton*>(QStringLiteral("restorationClearButton"));
     auto* undo = widget.findChild<QPushButton*>(QStringLiteral("restorationUndoButton"));
     auto* redo = widget.findChild<QPushButton*>(QStringLiteral("restorationRedoButton"));
+    auto* exportButton = widget.findChild<QPushButton*>(QStringLiteral("restorationExportButton"));
     auto* brush = widget.findChild<QPushButton*>(QStringLiteral("restorationBrushButton"));
     auto* eraser = widget.findChild<QPushButton*>(QStringLiteral("restorationEraserButton"));
     auto* rectangle = widget.findChild<QPushButton*>(QStringLiteral("restorationRectangleButton"));
@@ -83,6 +84,7 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(clear);
     QVERIFY(undo);
     QVERIFY(redo);
+    QVERIFY(exportButton);
     QVERIFY(brush);
     QVERIFY(eraser);
     QVERIFY(rectangle);
@@ -114,9 +116,26 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(brush->isChecked());
     eraser->click();
     QVERIFY(eraser->isChecked());
-    QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, canvas->rect().center());
+    const QPoint center = canvas->rect().center();
+    QTest::mousePress(canvas, Qt::LeftButton, Qt::NoModifier, center - QPoint(60, 0));
+    QTest::mouseMove(canvas, center);
+    QTest::mouseMove(canvas, center + QPoint(60, 0));
+    QTest::mouseRelease(canvas, Qt::LeftButton, Qt::NoModifier, center + QPoint(60, 0));
     const QImage erasedMask = widget.maskImage().copy();
     QVERIFY(erasedMask != automaticMask);
+    const QSize imageSize = automaticMask.size();
+    const QSize scaled = imageSize.scaled(canvas->size(), Qt::KeepAspectRatio);
+    const QRect imageArea(QPoint((canvas->width() - scaled.width()) / 2,
+                                 (canvas->height() - scaled.height()) / 2), scaled);
+    const auto imagePoint = [&](const QPoint& point) {
+        return QPoint((point.x() - imageArea.left()) * imageSize.width() / imageArea.width(),
+                      (point.y() - imageArea.top()) * imageSize.height() / imageArea.height());
+    };
+    for (const QPoint& point : {center - QPoint(60, 0), center, center + QPoint(60, 0)}) {
+        const QPoint mapped = imagePoint(point);
+        QCOMPARE(qGray(automaticMask.pixel(mapped)), 255);
+        QCOMPARE(qGray(erasedMask.pixel(mapped)), 0);
+    }
     QVERIFY(undo->isEnabled());
     undo->click();
     QCOMPARE(widget.maskImage(), automaticMask);
@@ -136,6 +155,7 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QCOMPARE(widget.maskImage(), editedMask);
 
     const QString exportPath = directory.filePath(QStringLiteral("restored.png"));
+    QTRY_VERIFY_WITH_TIMEOUT(exportButton->isEnabled(), 3000);
     QString error;
     QVERIFY(widget.exportPng(exportPath, &error));
     QImage exported(exportPath);

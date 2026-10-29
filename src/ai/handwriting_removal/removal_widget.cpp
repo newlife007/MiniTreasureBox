@@ -114,8 +114,8 @@ protected:
             update();
             return;
         }
-        painting_ = true;
-        editAt(event->position().toPoint(), false);
+        painting_ = document_->beginEdit();
+        if (painting_) editAt(event->position().toPoint());
     }
 
     void mouseMoveEvent(QMouseEvent* event) override
@@ -124,7 +124,7 @@ protected:
             rectangleEnd_ = event->position().toPoint();
             update();
         } else if (painting_ && (event->buttons() & Qt::LeftButton)) {
-            editAt(event->position().toPoint(), false);
+            editAt(event->position().toPoint());
         }
     }
 
@@ -145,7 +145,7 @@ protected:
             update();
         } else if (painting_) {
             painting_ = false;
-            if (edited_) {
+            if (document_->endEdit() && edited_) {
                 edited_(true);
             }
         }
@@ -173,7 +173,7 @@ private:
                 qBound(0, y, document_->original().height() - 1)};
     }
 
-    void editAt(const QPoint& position, bool final)
+    void editAt(const QPoint& position)
     {
         const QPoint point = imagePoint(position);
         if (point.x() < 0) {
@@ -183,9 +183,6 @@ private:
         const int imageRadius = qMax(1, brushRadius_ * document_->original().width()
                                            / qMax(1, target.width()));
         if (document_->paint(point, imageRadius, tool_ == EditTool::Brush)) {
-            if (edited_) {
-                edited_(final);
-            }
             update();
         }
     }
@@ -333,9 +330,14 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
 
 HandwritingRemovalWidget::~HandwritingRemovalWidget()
 {
-    ++taskId_;
-    if (workerThread_) {
-        workerThread_->wait();
+    ++automaticTaskId_;
+    ++resultTaskId_;
+    const QVector<QThread*> workers = workerThreads_;
+    for (QThread* thread : workers) thread->requestInterruption();
+    for (QThread* thread : workers) {
+        thread->disconnect(this);
+        thread->wait();
+        delete thread;
     }
 }
 
@@ -348,7 +350,9 @@ bool HandwritingRemovalWidget::importImage(const QString& path)
         showError(tr("图片无法读取或格式不受支持。原文件未修改，请选择有效图片。"));
         return false;
     }
-    ++taskId_;
+    ++automaticTaskId_;
+    if (automaticThread_) automaticThread_->requestInterruption();
+    cancelResultProcessing();
     automaticMask_ = {};
     result_ = document_.original().copy();
     canvas_->setResult(result_);
@@ -360,37 +364,33 @@ bool HandwritingRemovalWidget::importImage(const QString& path)
 
 void HandwritingRemovalWidget::startAutomaticProcessing()
 {
-    if (workerThread_ || !document_.isLoaded()) {
+    if (automaticThread_ || !document_.isLoaded()) {
         return;
     }
+    cancelResultProcessing();
     const QImage original = document_.original().copy();
     const auto engine = engine_;
-    const quint64 currentTask = ++taskId_;
+    const quint64 currentTask = ++automaticTaskId_;
     QPointer<HandwritingRemovalWidget> guard(this);
     setBusy(true);
     status_->setText(tr("正在运行保守的本地图像检测，不会上传图片。"));
-    workerThread_ = QThread::create([original, engine, guard, currentTask] {
-        const RemovalResult result = engine->detectAndRemove(original);
+    automaticThread_ = QThread::create([original, engine, guard, currentTask] {
+        const RemovalResult result = engine->detectAndRemove(original, {}, [] {
+            return QThread::currentThread()->isInterruptionRequested();
+        });
         if (guard) {
             QMetaObject::invokeMethod(guard, [guard, currentTask, result] {
                 if (guard) guard->finishAutomatic(currentTask, result);
             }, Qt::QueuedConnection);
         }
     });
-    QThread* const thread = workerThread_;
-    connect(thread, &QThread::finished, this, [this, thread] {
-        if (workerThread_ == thread) {
-            workerThread_ = nullptr;
-            setBusy(false);
-        }
-        thread->deleteLater();
-    });
-    thread->start();
+    trackWorker(automaticThread_);
+    automaticThread_->start();
 }
 
 void HandwritingRemovalWidget::clearMask()
 {
-    if (!document_.isLoaded() || workerThread_) return;
+    if (!document_.isLoaded() || automaticThread_) return;
     document_.clearMask();
     refreshResult();
     status_->setText(tr("Mask 已清空，内存中的原图仍保持不变。"));
@@ -398,7 +398,7 @@ void HandwritingRemovalWidget::clearMask()
 
 void HandwritingRemovalWidget::restartMask()
 {
-    if (!document_.isLoaded() || automaticMask_.isNull() || workerThread_) return;
+    if (!document_.isLoaded() || automaticMask_.isNull() || automaticThread_) return;
     if (document_.setMask(automaticMask_)) {
         refreshResult();
         status_->setText(tr("已恢复最近一次自动生成的候选 Mask。"));
@@ -407,8 +407,8 @@ void HandwritingRemovalWidget::restartMask()
 
 bool HandwritingRemovalWidget::exportPng(const QString& path, QString* error) const
 {
-    if (path.trimmed().isEmpty() || result_.isNull()) {
-        if (error) *error = tr("没有可导出的结果或导出路径无效。");
+    if (path.trimmed().isEmpty() || result_.isNull() || resultPending_) {
+        if (error) *error = tr("没有可导出的最新结果、结果仍在处理，或导出路径无效。");
         return false;
     }
     QSaveFile file(path);
@@ -470,7 +470,7 @@ void HandwritingRemovalWidget::chooseExportPath()
 
 void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResult& result)
 {
-    if (taskId != taskId_) return;
+    if (taskId != automaticTaskId_ || result.error == RemovalError::Cancelled) return;
     if (!result.ok || !document_.setMask(result.mask)) {
         showError(result.message.isEmpty() ? tr("本地基线处理失败，原图片仍保留。")
                                            : result.message);
@@ -487,24 +487,76 @@ void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResu
 void HandwritingRemovalWidget::refreshResult()
 {
     if (!document_.isLoaded()) return;
-    const RemovalResult removal = engine_->removeWithMask(document_.original(), document_.mask());
-    if (!removal.ok) {
-        showError(removal.message);
+    cancelResultProcessing();
+    const QImage original = document_.original();
+    const QImage mask = document_.mask();
+    const auto engine = engine_;
+    const quint64 currentTask = ++resultTaskId_;
+    QPointer<HandwritingRemovalWidget> guard(this);
+    resultPending_ = true;
+    status_->setText(tr("正在后台更新复原预览。"));
+    resultThread_ = QThread::create([original, mask, engine, guard, currentTask] {
+        const RemovalResult result = engine->removeWithMask(original, mask, {}, [] {
+            return QThread::currentThread()->isInterruptionRequested();
+        });
+        if (guard) {
+            QMetaObject::invokeMethod(guard, [guard, currentTask, result] {
+                if (guard) guard->finishResult(currentTask, result);
+            }, Qt::QueuedConnection);
+        }
+    });
+    trackWorker(resultThread_);
+    resultThread_->start();
+    refreshControls();
+}
+
+void HandwritingRemovalWidget::finishResult(quint64 taskId, const RemovalResult& result)
+{
+    if (taskId != resultTaskId_ || result.error == RemovalError::Cancelled) return;
+    resultPending_ = false;
+    if (!result.ok) {
+        showError(result.message);
+        refreshControls();
         return;
     }
-    result_ = removal.restored;
+    result_ = result.restored;
     canvas_->setResult(result_);
+    status_->setText(result.message);
     refreshControls();
+}
+
+void HandwritingRemovalWidget::cancelResultProcessing()
+{
+    ++resultTaskId_;
+    resultPending_ = false;
+    if (resultThread_) {
+        resultThread_->requestInterruption();
+        resultThread_ = nullptr;
+    }
+}
+
+void HandwritingRemovalWidget::trackWorker(QThread* thread)
+{
+    workerThreads_.append(thread);
+    connect(thread, &QThread::finished, this, [this, thread] {
+        workerThreads_.removeAll(thread);
+        if (automaticThread_ == thread) {
+            automaticThread_ = nullptr;
+            setBusy(false);
+        }
+        if (resultThread_ == thread) resultThread_ = nullptr;
+        thread->deleteLater();
+    });
 }
 
 void HandwritingRemovalWidget::refreshControls()
 {
     const bool loaded = document_.isLoaded();
-    const bool idle = workerThread_ == nullptr;
+    const bool idle = automaticThread_ == nullptr;
     automaticButton_->setEnabled(loaded && idle);
     undoButton_->setEnabled(loaded && idle && document_.canUndo());
     redoButton_->setEnabled(loaded && idle && document_.canRedo());
-    exportButton_->setEnabled(loaded && idle && !result_.isNull());
+    exportButton_->setEnabled(loaded && idle && !resultPending_ && !result_.isNull());
     canvas_->setEnabled(loaded && idle);
     canvas_->update();
 }
@@ -514,7 +566,7 @@ void HandwritingRemovalWidget::setBusy(bool busy)
     automaticButton_->setEnabled(!busy && document_.isLoaded());
     undoButton_->setEnabled(!busy && document_.canUndo());
     redoButton_->setEnabled(!busy && document_.canRedo());
-    exportButton_->setEnabled(!busy && !result_.isNull());
+    exportButton_->setEnabled(!busy && !resultPending_ && !result_.isNull());
     canvas_->setEnabled(!busy && document_.isLoaded());
 }
 

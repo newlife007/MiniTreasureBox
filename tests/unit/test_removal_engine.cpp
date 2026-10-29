@@ -1,5 +1,6 @@
 #include "ai/handwriting_removal/removal_engine.h"
 
+#include <QElapsedTimer>
 #include <QImage>
 #include <QTest>
 
@@ -11,6 +12,8 @@ class RemovalEngineTest final : public QObject {
 private slots:
     void proposesConservativeColorMaskAndFillsLocally();
     void editsMaskWithUndoAndRedo();
+    void coalescesGesturesAndBoundsLargeImageHistory();
+    void processesProductionSizedImageInLinearTime();
     void rejectsInvalidInputsAndPreservesOriginal();
 };
 
@@ -57,6 +60,51 @@ void RemovalEngineTest::editsMaskWithUndoAndRedo()
     QCOMPARE(qGray(document.mask().pixel(22, 12)), 255);
 }
 
+void RemovalEngineTest::coalescesGesturesAndBoundsLargeImageHistory()
+{
+    QImage page(4000, 3000, QImage::Format_RGB32);
+    page.fill(Qt::white);
+    MaskDocument document;
+    QVERIFY(document.load(page));
+
+    QVERIFY(document.beginEdit());
+    for (int x = 100; x <= 900; x += 100) {
+        QVERIFY(document.paint(QPoint(x, 500), 30, true));
+    }
+    QVERIFY(document.endEdit());
+    QCOMPARE(document.historySize(), std::size_t{2});
+    QVERIFY(document.undo());
+    for (int x = 100; x <= 900; x += 100) {
+        QCOMPARE(qGray(document.mask().pixel(x, 500)), 0);
+    }
+    QVERIFY(document.redo());
+
+    for (int edit = 0; edit < 12; ++edit) {
+        QVERIFY(document.paint(QPoint(1200 + edit * 100, 1000), 20, true));
+    }
+    QVERIFY(document.historyBytes() <= MaskDocument::HistoryByteLimit);
+    QVERIFY(document.historySize() <= std::size_t{5});
+}
+
+void RemovalEngineTest::processesProductionSizedImageInLinearTime()
+{
+    QImage page(4000, 3000, QImage::Format_RGB32);
+    page.fill(QColor(246, 244, 238));
+    QImage mask(page.size(), QImage::Format_Grayscale8);
+    mask.fill(0);
+    for (int y = 100; y < page.height(); y += 300) {
+        for (int x = 0; x < page.width(); ++x) mask.scanLine(y)[x] = 255;
+    }
+
+    QElapsedTimer timer;
+    timer.start();
+    const QImage result = BaselineHandwritingRemovalEngine::conservativeFill(page, mask);
+    QVERIFY(!result.isNull());
+    QCOMPARE(result.size(), page.size());
+    QVERIFY2(timer.elapsed() < 8000,
+             qPrintable(QStringLiteral("12-megapixel fill took %1 ms").arg(timer.elapsed())));
+}
+
 void RemovalEngineTest::rejectsInvalidInputsAndPreservesOriginal()
 {
     const BaselineHandwritingRemovalEngine engine;
@@ -68,6 +116,10 @@ void RemovalEngineTest::rejectsInvalidInputsAndPreservesOriginal()
     QImage wrongMask(3, 3, QImage::Format_Grayscale8);
     wrongMask.fill(255);
     QCOMPARE(engine.removeWithMask(page, wrongMask).error, RemovalError::InvalidInput);
+    QImage validMask(page.size(), QImage::Format_Grayscale8);
+    validMask.fill(255);
+    QCOMPARE(engine.removeWithMask(page, validMask, {}, [] { return true; }).error,
+             RemovalError::Cancelled);
     QCOMPARE(page, original);
 
     MaskDocument document;

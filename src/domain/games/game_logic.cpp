@@ -1,5 +1,7 @@
 #include "domain/games/game_logic.h"
 
+#include <QRandomGenerator>
+
 #include <algorithm>
 #include <vector>
 
@@ -10,6 +12,15 @@ void GuessNumberGame::start(int target)
     target_ = std::clamp(target, 1, 100);
     attempts_ = 0;
     state_ = GameState::Running;
+}
+
+void GuessNumberGame::togglePause()
+{
+    if (state_ == GameState::Running) {
+        state_ = GameState::Paused;
+    } else if (state_ == GameState::Paused) {
+        state_ = GameState::Running;
+    }
 }
 
 GuessResult GuessNumberGame::guess(const QString& text)
@@ -34,8 +45,16 @@ void Game2048::start()
 {
     board_ = {};
     score_ = 0;
-    spawn(0, 2);
-    spawn(1, 2);
+    spawn(-1, 0);
+    spawn(-1, 0);
+}
+
+void Game2048::start(int firstCell, int secondCell, int firstValue, int secondValue)
+{
+    board_ = {};
+    score_ = 0;
+    spawn(firstCell, firstValue);
+    spawn(secondCell, secondValue);
 }
 
 void Game2048::setBoard(const Board& board)
@@ -64,9 +83,12 @@ void Game2048::spawn(int cell, int value)
         return;
     }
     if (!empty.contains(cell)) {
-        cell = empty.first();
+        cell = empty.at(QRandomGenerator::global()->bounded(empty.size()));
     }
-    board_[cell / 4][cell % 4] = value == 4 ? 4 : 2;
+    if (value != 2 && value != 4) {
+        value = QRandomGenerator::global()->bounded(10) == 0 ? 4 : 2;
+    }
+    board_[cell / 4][cell % 4] = value;
 }
 
 bool Game2048::move(Direction direction, int spawnCell, int spawnValue)
@@ -218,14 +240,18 @@ void SnakeGame::togglePause()
 
 void SnakeGame::placeFood()
 {
+    QVector<QPoint> empty;
+    empty.reserve(width_ * height_ - body_.size());
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const QPoint candidate(x, y);
             if (!body_.contains(candidate)) {
-                food_ = candidate;
-                return;
+                empty.append(candidate);
             }
         }
+    }
+    if (!empty.isEmpty()) {
+        food_ = empty.at(QRandomGenerator::global()->bounded(empty.size()));
     }
 }
 
@@ -237,7 +263,9 @@ QVector<QPoint> TetrisGame::cells(Piece piece, int rotation, QPoint origin) cons
     case Piece::O: offsets = {{0, 0}, {1, 0}, {0, 1}, {1, 1}}; break;
     case Piece::T: offsets = {{-1, 0}, {0, 0}, {1, 0}, {0, 1}}; break;
     case Piece::L: offsets = {{-1, 0}, {0, 0}, {1, 0}, {1, 1}}; break;
+    case Piece::J: offsets = {{-1, 0}, {0, 0}, {1, 0}, {-1, 1}}; break;
     case Piece::S: offsets = {{0, 0}, {1, 0}, {-1, 1}, {0, 1}}; break;
+    case Piece::Z: offsets = {{-1, 0}, {0, 0}, {0, 1}, {1, 1}}; break;
     }
     if (piece != Piece::O) {
         for (int turn = 0; turn < rotation % 4; ++turn) {
@@ -265,15 +293,42 @@ bool TetrisGame::fits(Piece piece, int rotation, QPoint origin) const
     return true;
 }
 
-void TetrisGame::start(Piece piece)
+void TetrisGame::reset()
 {
     board_ = {};
     score_ = 0;
     lines_ = 0;
-    nextPiece_ = static_cast<int>(piece);
-    piece_ = piece;
+    bagIndex_ = static_cast<int>(bag_.size());
     origin_ = QPoint(4, 1);
     rotation_ = 0;
+}
+
+void TetrisGame::refillBag()
+{
+    bag_ = {Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z};
+    for (int index = static_cast<int>(bag_.size()) - 1; index > 0; --index) {
+        const int other = QRandomGenerator::global()->bounded(index + 1);
+        std::swap(bag_[static_cast<std::size_t>(index)],
+                  bag_[static_cast<std::size_t>(other)]);
+    }
+    bagIndex_ = 0;
+}
+
+void TetrisGame::start()
+{
+    reset();
+    refillBag();
+    piece_ = bag_[static_cast<std::size_t>(bagIndex_++)];
+    state_ = fits(piece_, rotation_, origin_) ? GameState::Running : GameState::GameOver;
+}
+
+void TetrisGame::start(Piece piece)
+{
+    reset();
+    bag_ = {Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z};
+    const auto position = std::find(bag_.begin(), bag_.end(), piece);
+    bagIndex_ = static_cast<int>(std::distance(bag_.begin(), position)) + 1;
+    piece_ = piece;
     state_ = fits(piece_, rotation_, origin_) ? GameState::Running : GameState::GameOver;
 }
 
@@ -367,8 +422,10 @@ void TetrisGame::spawnNext()
     if (state_ == GameState::GameOver) {
         return;
     }
-    nextPiece_ = (nextPiece_ + 1) % 5;
-    piece_ = static_cast<Piece>(nextPiece_);
+    if (bagIndex_ >= static_cast<int>(bag_.size())) {
+        refillBag();
+    }
+    piece_ = bag_[static_cast<std::size_t>(bagIndex_++)];
     origin_ = QPoint(4, 1);
     rotation_ = 0;
     if (!fits(piece_, rotation_, origin_)) {

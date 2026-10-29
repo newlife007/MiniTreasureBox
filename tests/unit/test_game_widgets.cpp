@@ -8,6 +8,7 @@
 
 #include <QCheckBox>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
 #include <QSettings>
@@ -74,6 +75,7 @@ void GameWidgetsTest::everyFactoryProvidesAccessibleSharedControls()
         QVERIFY(surface);
         QVERIFY(start);
         QVERIFY(pause);
+        QVERIFY(!pause->isHidden());
         QVERIFY(restart);
         QVERIFY(sound);
         QVERIFY(status);
@@ -91,6 +93,24 @@ void GameWidgetsTest::keyboardChangesStateAndControlsPauseRestart()
 {
     ToolRegistry registry;
     registerBuiltinTools(registry);
+
+    std::unique_ptr<QWidget> guessWidget(registry.find(QStringLiteral("guess-number"))->createWidget());
+    guessWidget->show();
+    QCoreApplication::processEvents();
+    auto* guessPause = guessWidget->findChild<QPushButton*>(QStringLiteral("pauseButton"));
+    auto* guessStart = guessWidget->findChild<QPushButton*>(QStringLiteral("startButton"));
+    auto* guessInput = guessWidget->findChild<QLineEdit*>(QStringLiteral("guessInput"));
+    auto* guessStatus = guessWidget->findChild<QLabel*>(QStringLiteral("gameStatus"));
+    QVERIFY(guessPause);
+    QVERIFY(guessStart);
+    QVERIFY(guessPause->isVisible());
+    guessStart->click();
+    QTest::keyClick(guessInput, Qt::Key_Space);
+    QCOMPARE(guessStatus->text(), QStringLiteral("已暂停"));
+    QVERIFY(!guessInput->isEnabled());
+    guessPause->click();
+    QVERIFY(guessInput->isEnabled());
+
     std::unique_ptr<QWidget> widget(registry.find(QStringLiteral("game-2048"))->createWidget());
     widget->show();
     QCoreApplication::processEvents();
@@ -99,9 +119,14 @@ void GameWidgetsTest::keyboardChangesStateAndControlsPauseRestart()
     auto* score = widget->findChild<QLabel*>(QStringLiteral("scoreLabel"));
     QVERIFY(surface);
     surface->setFocus();
-    QTest::keyClick(surface, Qt::Key_Left);
-    QCOMPARE(surface->property("score").toInt(), 4);
-    QVERIFY(score->text().contains(QStringLiteral("4")));
+    QCOMPARE(surface->property("tileCount").toInt(), 2);
+    const QString initialBoard = surface->property("boardState").toString();
+    for (int key : {Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down}) {
+        if (surface->property("boardState").toString() != initialBoard) break;
+        QTest::keyClick(surface, static_cast<Qt::Key>(key));
+    }
+    QVERIFY(surface->property("boardState").toString() != initialBoard);
+    QVERIFY(score->text().contains(QString::number(surface->property("score").toInt())));
     QTest::keyClick(surface, Qt::Key_Space);
     QCOMPARE(status->text(), QStringLiteral("已暂停"));
     const int pausedScore = surface->property("score").toInt();

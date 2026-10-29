@@ -72,6 +72,27 @@ protected:
     }
 };
 
+class GuessInput final : public QLineEdit {
+public:
+    explicit GuessInput(QWidget* parent = nullptr)
+        : QLineEdit(parent)
+    {
+    }
+
+    std::function<void(int)> gameKey;
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override
+    {
+        if (gameKey && (event->key() == Qt::Key_Space || event->key() == Qt::Key_R)) {
+            gameKey(event->key());
+            event->accept();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+};
+
 struct PageParts {
     QWidget* page;
     QVBoxLayout* layout;
@@ -175,7 +196,7 @@ QWidget* createGuessNumberWidget(QWidget* parent)
 {
     PageParts parts = makePage(QStringLiteral("guess-number"), parent);
     auto game = std::make_shared<GuessNumberGame>();
-    auto* input = new QLineEdit(parts.page);
+    auto* input = new GuessInput(parts.page);
     input->setObjectName(QStringLiteral("guessInput"));
     input->setPlaceholderText(QWidget::tr("输入 1 到 100 的整数"));
     input->setAccessibleName(QWidget::tr("猜测数字"));
@@ -184,16 +205,31 @@ QWidget* createGuessNumberWidget(QWidget* parent)
     entry->addWidget(input, 1);
     entry->addWidget(submit);
     parts.layout->insertLayout(2, entry);
-    parts.pause->setVisible(false);
 
     const auto start = [=] {
         game->start(QRandomGenerator::global()->bounded(1, 101));
         input->clear();
         parts.status->setText(QWidget::tr("请输入 1 到 100 之间的数字"));
         parts.score->setText(QWidget::tr("尝试次数：0"));
+        parts.pause->setText(QWidget::tr("暂停"));
+        input->setEnabled(true);
+        submit->setEnabled(true);
         parts.surface->setProperty("gameState", QStringLiteral("running"));
         input->setFocus();
         parts.surface->update();
+    };
+    const auto pause = [=] {
+        game->togglePause();
+        const bool paused = game->state() == GameState::Paused;
+        if (game->state() != GameState::Running && !paused) return;
+        parts.pause->setText(paused ? QWidget::tr("继续") : QWidget::tr("暂停"));
+        parts.status->setText(paused ? QWidget::tr("已暂停")
+                                     : QWidget::tr("请输入 1 到 100 之间的数字"));
+        input->setEnabled(!paused);
+        submit->setEnabled(!paused);
+        parts.surface->setProperty("gameState", paused ? QStringLiteral("paused")
+                                                       : QStringLiteral("running"));
+        if (!paused) input->setFocus();
     };
     const auto submitGuess = [=] {
         const GuessResult result = game->guess(input->text());
@@ -204,15 +240,22 @@ QWidget* createGuessNumberWidget(QWidget* parent)
             parts.settings->updateHighScore(QStringLiteral("guess-number"), score);
             parts.highScore->setText(QWidget::tr("最高分：%1").arg(parts.settings->highScore(QStringLiteral("guess-number"))));
             parts.surface->setProperty("gameState", QStringLiteral("won"));
+            input->setEnabled(false);
+            submit->setEnabled(false);
             beepIfEnabled(parts.settings);
         }
         input->selectAll();
     };
     QObject::connect(parts.start, &QPushButton::clicked, parts.page, start);
     QObject::connect(parts.restart, &QPushButton::clicked, parts.page, start);
+    QObject::connect(parts.pause, &QPushButton::clicked, parts.page, pause);
     QObject::connect(submit, &QPushButton::clicked, parts.page, submitGuess);
     QObject::connect(input, &QLineEdit::returnPressed, parts.page, submitGuess);
-    parts.surface->key = [=](int key) { if (key == Qt::Key_R) start(); };
+    input->gameKey = [=](int key) {
+        if (key == Qt::Key_R) start();
+        else if (key == Qt::Key_Space) pause();
+    };
+    parts.surface->key = input->gameKey;
     parts.surface->paint = [=](QPainter& painter, const QRect& area) {
         painter.setPen(parts.surface->palette().color(QPalette::Text));
         QFont font = painter.font();
@@ -234,6 +277,12 @@ QWidget* create2048Widget(QWidget* parent)
         parts.settings->updateHighScore(QStringLiteral("game-2048"), game->score());
         parts.highScore->setText(QWidget::tr("最高分：%1").arg(parts.settings->highScore(QStringLiteral("game-2048"))));
         parts.surface->setProperty("score", game->score());
+        parts.surface->setProperty("tileCount", 16 - game->emptyCells().size());
+        QString boardState;
+        for (const auto& row : game->board()) {
+            for (int value : row) boardState += QString::number(value) + QLatin1Char(',');
+        }
+        parts.surface->setProperty("boardState", boardState);
         if (game->hasWon()) parts.status->setText(QWidget::tr("已合成 2048，胜利！"));
         else if (game->isGameOver()) parts.status->setText(QWidget::tr("游戏结束"));
         else parts.status->setText(*paused ? QWidget::tr("已暂停") : QWidget::tr("游戏中"));
@@ -431,17 +480,21 @@ QWidget* createGomokuWidget(QWidget* parent)
     auto game = std::make_shared<GomokuGame>();
     auto cursor = std::make_shared<QPoint>(GomokuGame::Size / 2, GomokuGame::Size / 2);
     auto paused = std::make_shared<bool>(false);
+    auto winRecorded = std::make_shared<bool>(false);
     parts.score->setText(QWidget::tr("当前：黑方"));
     const auto refresh = [=] {
         if (game->state() == GameState::Won) {
             parts.status->setText(game->winner() == 1 ? QWidget::tr("黑方胜利") : QWidget::tr("白方胜利"));
-            parts.settings->updateHighScore(QStringLiteral("gomoku"), 1);
-            beepIfEnabled(parts.settings);
+            if (!*winRecorded) {
+                parts.settings->incrementWinCount(QStringLiteral("gomoku"));
+                *winRecorded = true;
+                beepIfEnabled(parts.settings);
+            }
         } else {
             parts.status->setText(*paused ? QWidget::tr("已暂停") : QWidget::tr("对局中"));
         }
         parts.score->setText(game->currentPlayer() == 1 ? QWidget::tr("当前：黑方") : QWidget::tr("当前：白方"));
-        parts.highScore->setText(QWidget::tr("本地胜局：%1").arg(parts.settings->highScore(QStringLiteral("gomoku"))));
+        parts.highScore->setText(QWidget::tr("本地胜局：%1").arg(parts.settings->winCount(QStringLiteral("gomoku"))));
         parts.surface->setProperty("currentPlayer", game->currentPlayer());
         parts.surface->update();
     };
@@ -449,6 +502,7 @@ QWidget* createGomokuWidget(QWidget* parent)
         game->start();
         *cursor = QPoint(GomokuGame::Size / 2, GomokuGame::Size / 2);
         *paused = false;
+        *winRecorded = false;
         parts.pause->setText(QWidget::tr("暂停"));
         refresh();
         parts.surface->setFocus();

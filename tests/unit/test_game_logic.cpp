@@ -1,6 +1,7 @@
 #include "domain/games/game_logic.h"
 #include "domain/games/game_settings.h"
 
+#include <QSet>
 #include <QSettings>
 #include <QTemporaryDir>
 #include <QTest>
@@ -27,6 +28,11 @@ void GameLogicTest::guessNumberValidatesAndWins()
     QCOMPARE(game.guess(QStringLiteral("101")).outcome, GuessResult::Outcome::Invalid);
     QCOMPARE(game.attempts(), 0);
     QCOMPARE(game.guess(QStringLiteral("20")).outcome, GuessResult::Outcome::TooLow);
+    game.togglePause();
+    QCOMPARE(game.state(), GameState::Paused);
+    QCOMPARE(game.guess(QStringLiteral("42")).outcome, GuessResult::Outcome::Invalid);
+    QCOMPARE(game.attempts(), 1);
+    game.togglePause();
     QCOMPARE(game.guess(QStringLiteral("70")).outcome, GuessResult::Outcome::TooHigh);
     QCOMPARE(game.guess(QStringLiteral("42")).outcome, GuessResult::Outcome::Correct);
     QCOMPARE(game.attempts(), 3);
@@ -36,10 +42,28 @@ void GameLogicTest::guessNumberValidatesAndWins()
 void GameLogicTest::game2048MergesOnceAndDetectsEnd()
 {
     Game2048 game;
+    game.start(0, 15, 2, 4);
+    QCOMPARE(game.board()[0][0], 2);
+    QCOMPARE(game.board()[3][3], 4);
+
+    for (int attempt = 0; attempt < 24; ++attempt) {
+        game.start();
+        int tileCount = 0;
+        for (const auto& row : game.board()) {
+            for (int value : row) {
+                if (!value) continue;
+                QVERIFY(value == 2 || value == 4);
+                ++tileCount;
+            }
+        }
+        QCOMPARE(tileCount, 2);
+        QCOMPARE(game.emptyCells().size(), 14);
+    }
+
     Game2048::Board board{};
     board[0] = {2, 2, 2, 2};
     game.setBoard(board);
-    QVERIFY(game.move(Direction::Left, 2));
+    QVERIFY(game.move(Direction::Left, 2, 2));
     QCOMPARE(game.board()[0], (std::array<int, 4>{4, 4, 2, 0}));
     QCOMPARE(game.score(), 8);
 
@@ -62,6 +86,10 @@ void GameLogicTest::game2048MergesOnceAndDetectsEnd()
 void GameLogicTest::snakeGrowsPausesAndRejectsReverse()
 {
     SnakeGame game(8, 8);
+    for (int attempt = 0; attempt < 20; ++attempt) {
+        game.start();
+        QVERIFY(!game.body().contains(game.food()));
+    }
     game.start();
     const QPoint head = game.body().first();
     game.setDirection(Direction::Left);
@@ -82,6 +110,26 @@ void GameLogicTest::snakeGrowsPausesAndRejectsReverse()
 
 void GameLogicTest::tetrisMovesDropsClearsAndEnds()
 {
+    const std::array<TetrisGame::Piece, 7> pieces{
+        TetrisGame::Piece::I, TetrisGame::Piece::O, TetrisGame::Piece::T,
+        TetrisGame::Piece::L, TetrisGame::Piece::J, TetrisGame::Piece::S,
+        TetrisGame::Piece::Z};
+    for (TetrisGame::Piece piece : pieces) {
+        TetrisGame shape;
+        shape.start(piece);
+        QCOMPARE(shape.currentCells().size(), 4);
+        QCOMPARE(shape.currentPiece(), piece);
+    }
+
+    TetrisGame bagGame;
+    bagGame.start();
+    QSet<int> bagPieces;
+    for (int index = 0; index < 7; ++index) {
+        bagPieces.insert(static_cast<int>(bagGame.currentPiece()));
+        if (index < 6) bagGame.hardDrop();
+    }
+    QCOMPARE(bagPieces.size(), 7);
+
     TetrisGame game;
     game.start(TetrisGame::Piece::I);
     const auto activeCells = game.currentCells();
@@ -104,7 +152,7 @@ void GameLogicTest::tetrisMovesDropsClearsAndEnds()
 
     game.start(TetrisGame::Piece::T);
     board = {};
-    board[2].fill(1);
+    board[2][5] = 1;
     game.setBoard(board);
     (void)game.step();
     QCOMPARE(game.state(), GameState::GameOver);
@@ -140,12 +188,23 @@ void GameLogicTest::settingsPersistScoresAndSound()
         settings.setSoundEnabled(false);
         QVERIFY(settings.updateHighScore(QStringLiteral("snake"), 30));
         QVERIFY(!settings.updateHighScore(QStringLiteral("snake"), 20));
+        for (int match = 0; match < 2; ++match) {
+            GomokuGame game;
+            game.start();
+            for (int x = 0; x < 5; ++x) {
+                QVERIFY(game.place(x, 0));
+                if (x < 4) QVERIFY(game.place(x, 2));
+            }
+            QCOMPARE(game.state(), GameState::Won);
+            QCOMPARE(settings.incrementWinCount(QStringLiteral("gomoku")), match + 1);
+        }
     }
     QSettings recreated(path, QSettings::IniFormat);
     GameSettings settings(recreated);
     QVERIFY(!settings.soundEnabled());
     QCOMPARE(settings.highScore(QStringLiteral("snake")), 30);
     QCOMPARE(settings.highScore(QStringLiteral("tetris")), 0);
+    QCOMPARE(settings.winCount(QStringLiteral("gomoku")), 2);
 }
 
 QTEST_APPLESS_MAIN(GameLogicTest)
