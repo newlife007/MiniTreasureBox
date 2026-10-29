@@ -69,7 +69,7 @@ ctest --test-dir build -C Release --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G NSIS
 ```
 
-生成的安装程序为 `build/packages/MiniTreasureBox-0.1.1-windows-x64-unsigned-preview.exe`，其中包含应用程序和运行所需的 Qt 库及插件。安装程序是自包含的，安装后无需修改 `PATH` 或其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
+生成的安装程序为 `build/packages/MiniTreasureBox-0.1.2-windows-x64-unsigned-preview.exe`，其中包含应用程序和运行所需的 Qt 库及插件。安装程序是自包含的，安装后无需修改 `PATH` 或其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
 
 macOS 使用 Qt 的 `clang_64` 工具链：
 
@@ -80,13 +80,13 @@ ctest --test-dir build --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G DragNDrop
 ```
 
-生成的磁盘映像为 `build/packages/MiniTreasureBox-0.1.1-macos-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app` 和运行所需的 Qt 库及插件。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
+生成的磁盘映像为 `build/packages/MiniTreasureBox-0.1.2-macos-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app` 和运行所需的 Qt 库及插件。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
 
 GitHub Actions 的 **Build release packages** 工作流也可以手动运行。手动运行会保留 Windows 和 macOS 安装包各 14 天，可从该次工作流的 Artifacts 区域下载，但不会创建 GitHub Release。发布新版本时，先确保 `CMakeLists.txt` 中的项目版本正确，再推送同版本的 `v` 前缀标签，例如：
 
 ```bash
-git tag v0.1.1
-git push origin v0.1.1
+git tag v0.1.2
+git push origin v0.1.2
 ```
 
 工作流会从 `CMakeLists.txt` 读取项目版本；标签必须与 `v${PROJECT_VERSION}` 完全一致，否则会在打包前失败。有效的 `v*` 标签会触发两个原生平台的构建和测试，并对生成的 `.exe` 与 `.dmg` 执行安装、启动和移除冒烟测试。全部验证通过后，工作流会将两个文件发布到该标签对应、明确标记为 **unsigned preview** 的预发布 GitHub Release。当前安装包不适合作为经过生产签名的正式发布物；待配置受保护的签名凭据后，才应移除该标记。
