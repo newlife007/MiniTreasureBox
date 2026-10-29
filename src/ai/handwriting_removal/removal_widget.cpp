@@ -82,17 +82,20 @@ protected:
         const QRect target = imageRect(displayed.size());
         painter.drawImage(target, displayed);
 
-        if (view_ == DisplayView::Mask) {
-            QImage overlay(document_->mask().size(), QImage::Format_ARGB32_Premultiplied);
-            overlay.fill(Qt::transparent);
+        if (view_ == DisplayView::Mask && !target.isEmpty()) {
+            const QImage scaledMask = document_->mask().scaled(
+                target.size(), Qt::IgnoreAspectRatio, Qt::FastTransformation);
+            QImage overlay(target.size(), QImage::Format_ARGB32_Premultiplied);
             const int alpha = qRound(maskOpacity_ * 255.0 / 100.0);
-            for (int y = 0; y < document_->mask().height(); ++y) {
-                const uchar* source = document_->mask().constScanLine(y);
+            for (int y = 0; y < scaledMask.height(); ++y) {
+                const uchar* source = scaledMask.constScanLine(y);
                 QRgb* destination = reinterpret_cast<QRgb*>(overlay.scanLine(y));
-                for (int x = 0; x < document_->mask().width(); ++x) {
-                    destination[x] = source[x] ? qRgba(220, 45, 45, alpha) : qRgba(0, 0, 0, 0);
+                for (int x = 0; x < scaledMask.width(); ++x) {
+                    destination[x] = source[x] ? qRgba(220, 45, 45, alpha)
+                                               : qRgba(0, 0, 0, 0);
                 }
             }
+            setProperty("maskOverlayPixelCount", overlay.width() * overlay.height());
             painter.drawImage(target, overlay);
         }
 
@@ -183,6 +186,7 @@ private:
         const int imageRadius = qMax(1, brushRadius_ * document_->original().width()
                                            / qMax(1, target.width()));
         if (document_->paint(point, imageRadius, tool_ == EditTool::Brush)) {
+            if (edited_) edited_(false);
             update();
         }
     }
@@ -322,6 +326,7 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
         if (final) {
             refreshResult();
         } else {
+            resultValid_ = false;
             refreshControls();
         }
     });
@@ -355,6 +360,7 @@ bool HandwritingRemovalWidget::importImage(const QString& path)
     cancelResultProcessing();
     automaticMask_ = {};
     result_ = document_.original().copy();
+    resultValid_ = true;
     canvas_->setResult(result_);
     viewSelector_->setCurrentIndex(1);
     status_->setText(tr("图片已载入内存。原文件不会被覆盖，可生成候选 Mask 或手动编辑。"));
@@ -407,7 +413,7 @@ void HandwritingRemovalWidget::restartMask()
 
 bool HandwritingRemovalWidget::exportPng(const QString& path, QString* error) const
 {
-    if (path.trimmed().isEmpty() || result_.isNull() || resultPending_) {
+    if (path.trimmed().isEmpty() || result_.isNull() || resultPending_ || !resultValid_) {
         if (error) *error = tr("没有可导出的最新结果、结果仍在处理，或导出路径无效。");
         return false;
     }
@@ -478,6 +484,7 @@ void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResu
     }
     automaticMask_ = result.mask.copy();
     result_ = result.restored.copy();
+    resultValid_ = true;
     canvas_->setResult(result_);
     viewSelector_->setCurrentIndex(1);
     status_->setText(result.message);
@@ -494,6 +501,7 @@ void HandwritingRemovalWidget::refreshResult()
     const quint64 currentTask = ++resultTaskId_;
     QPointer<HandwritingRemovalWidget> guard(this);
     resultPending_ = true;
+    resultValid_ = false;
     status_->setText(tr("正在后台更新复原预览。"));
     resultThread_ = QThread::create([original, mask, engine, guard, currentTask] {
         const RemovalResult result = engine->removeWithMask(original, mask, {}, [] {
@@ -520,6 +528,7 @@ void HandwritingRemovalWidget::finishResult(quint64 taskId, const RemovalResult&
         return;
     }
     result_ = result.restored;
+    resultValid_ = true;
     canvas_->setResult(result_);
     status_->setText(result.message);
     refreshControls();
@@ -556,7 +565,8 @@ void HandwritingRemovalWidget::refreshControls()
     automaticButton_->setEnabled(loaded && idle);
     undoButton_->setEnabled(loaded && idle && document_.canUndo());
     redoButton_->setEnabled(loaded && idle && document_.canRedo());
-    exportButton_->setEnabled(loaded && idle && !resultPending_ && !result_.isNull());
+    exportButton_->setEnabled(loaded && idle && !resultPending_ && resultValid_
+                              && !result_.isNull());
     canvas_->setEnabled(loaded && idle);
     canvas_->update();
 }
@@ -566,7 +576,8 @@ void HandwritingRemovalWidget::setBusy(bool busy)
     automaticButton_->setEnabled(!busy && document_.isLoaded());
     undoButton_->setEnabled(!busy && document_.canUndo());
     redoButton_->setEnabled(!busy && document_.canRedo());
-    exportButton_->setEnabled(!busy && !resultPending_ && !result_.isNull());
+    exportButton_->setEnabled(!busy && !resultPending_ && resultValid_
+                              && !result_.isNull());
     canvas_->setEnabled(!busy && document_.isLoaded());
 }
 

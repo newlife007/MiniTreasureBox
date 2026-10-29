@@ -38,6 +38,7 @@ private:
     void chooseImage();
     void chooseExportPath();
     void setBusy(bool busy);
+    void invalidateResult();
     void finishRecognition(quint64 taskId, const OcrResult& result);
     void showImportError(const QString& message);
     [[nodiscard]] OcrRequest request() const;
@@ -58,6 +59,7 @@ private:
     QThread* workerThread_{nullptr};
     std::shared_ptr<std::atomic_bool> cancellation_;
     quint64 taskId_{0};
+    bool resultValid_{false};
 };
 
 [[nodiscard]] QWidget* createOcrWidget(QWidget* parent = nullptr);

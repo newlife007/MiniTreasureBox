@@ -72,6 +72,7 @@ private:
     quint64 automaticTaskId_{0};
     quint64 resultTaskId_{0};
     bool resultPending_{false};
+    bool resultValid_{false};
 };
 
 [[nodiscard]] QWidget* createHandwritingRemovalWidget(QWidget* parent = nullptr);

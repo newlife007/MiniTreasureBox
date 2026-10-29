@@ -213,6 +213,7 @@ QWidget* createGuessNumberWidget(QWidget* parent)
         parts.score->setText(QWidget::tr("尝试次数：0"));
         parts.pause->setText(QWidget::tr("暂停"));
         input->setEnabled(true);
+        input->setReadOnly(false);
         submit->setEnabled(true);
         parts.surface->setProperty("gameState", QStringLiteral("running"));
         input->setFocus();
@@ -225,11 +226,11 @@ QWidget* createGuessNumberWidget(QWidget* parent)
         parts.pause->setText(paused ? QWidget::tr("继续") : QWidget::tr("暂停"));
         parts.status->setText(paused ? QWidget::tr("已暂停")
                                      : QWidget::tr("请输入 1 到 100 之间的数字"));
-        input->setEnabled(!paused);
+        input->setReadOnly(paused);
         submit->setEnabled(!paused);
         parts.surface->setProperty("gameState", paused ? QStringLiteral("paused")
                                                        : QStringLiteral("running"));
-        if (!paused) input->setFocus();
+        input->setFocus();
     };
     const auto submitGuess = [=] {
         const GuessResult result = game->guess(input->text());

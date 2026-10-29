@@ -46,6 +46,44 @@ QListWidgetItem* itemWithText(QListWidget* list, const QString& text)
     return nullptr;
 }
 
+class FailingRegenerationEngine final : public IHandwritingRemovalEngine {
+public:
+    RemovalResult detectAndRemove(const QImage& image, const RemovalOptions&,
+                                  const CancellationCheck&) const override
+    {
+        QImage mask(image.size(), QImage::Format_Grayscale8);
+        mask.fill(0);
+        return {true, mask, image.copy(), RemovalError::None,
+                QStringLiteral("initial result")};
+    }
+
+    RemovalResult removeWithMask(const QImage&, const QImage&, const RemovalOptions&,
+                                 const CancellationCheck&) const override
+    {
+        return {false, {}, {}, RemovalError::ProcessingFailed,
+                QStringLiteral("forced regeneration failure")};
+    }
+};
+
+class PassthroughRegenerationEngine final : public IHandwritingRemovalEngine {
+public:
+    RemovalResult detectAndRemove(const QImage& image, const RemovalOptions&,
+                                  const CancellationCheck&) const override
+    {
+        QImage mask(image.size(), QImage::Format_Grayscale8);
+        mask.fill(0);
+        return {true, mask, image.copy(), RemovalError::None, QStringLiteral("ready")};
+    }
+
+    RemovalResult removeWithMask(const QImage& image, const QImage& mask,
+                                 const RemovalOptions&,
+                                 const CancellationCheck&) const override
+    {
+        return {true, mask.copy(), image.copy(), RemovalError::None,
+                QStringLiteral("updated")};
+    }
+};
+
 }  // namespace
 
 class RemovalWidgetTest final : public QObject {
@@ -53,6 +91,8 @@ class RemovalWidgetTest final : public QObject {
 
 private slots:
     void importsProcessesEditsViewsAndExports();
+    void failedRegenerationKeepsStaleResultUnexportable();
+    void productionSizeCanvasRendersAndEditsAtDisplayResolution();
     void acceptsLocalDropAndReportsInvalidInput();
     void registryNavigationOpensOfflineTool();
 };
@@ -162,6 +202,69 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(!exported.isNull());
     QCOMPARE(exported.size(), original.size());
     QCOMPARE(widget.originalImage(), original);
+}
+
+void RemovalWidgetTest::failedRegenerationKeepsStaleResultUnexportable()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = createPage(directory, QStringLiteral("failure-page.png"));
+    auto engine = std::make_shared<FailingRegenerationEngine>();
+    HandwritingRemovalWidget widget(nullptr, engine);
+    widget.resize(900, 600);
+    widget.show();
+
+    auto* canvas = widget.findChild<QWidget*>(QStringLiteral("restorationCanvas"));
+    auto* automatic = widget.findChild<QPushButton*>(QStringLiteral("restorationAutoButton"));
+    auto* exportButton = widget.findChild<QPushButton*>(QStringLiteral("restorationExportButton"));
+    auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+    QVERIFY(canvas);
+    QVERIFY(automatic);
+    QVERIFY(exportButton);
+    QVERIFY(status);
+    QVERIFY(widget.importImage(path));
+    widget.startAutomaticProcessing();
+    QTRY_VERIFY_WITH_TIMEOUT(automatic->isEnabled(), 3000);
+    QVERIFY(exportButton->isEnabled());
+    const QImage previousResult = widget.resultImage().copy();
+
+    QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, canvas->rect().center());
+    QVERIFY(!exportButton->isEnabled());
+    QTRY_COMPARE_WITH_TIMEOUT(status->text(), QStringLiteral("forced regeneration failure"), 3000);
+    QCOMPARE(widget.resultImage(), previousResult);
+    QVERIFY(!exportButton->isEnabled());
+    QString error;
+    QVERIFY(!widget.exportPng(directory.filePath(QStringLiteral("stale.png")), &error));
+    QVERIFY(error.contains(QStringLiteral("最新结果")));
+}
+
+void RemovalWidgetTest::productionSizeCanvasRendersAndEditsAtDisplayResolution()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("production-page.png"));
+    QImage image(4000, 3000, QImage::Format_RGB32);
+    image.fill(Qt::white);
+    QVERIFY(image.save(path, "PNG"));
+
+    auto engine = std::make_shared<PassthroughRegenerationEngine>();
+    HandwritingRemovalWidget widget(nullptr, engine);
+    widget.resize(900, 600);
+    widget.show();
+    QVERIFY(widget.importImage(path));
+    auto* canvas = widget.findChild<QWidget*>(QStringLiteral("restorationCanvas"));
+    QVERIFY(canvas);
+    QTRY_VERIFY_WITH_TIMEOUT(canvas->property("maskOverlayPixelCount").toInt() > 0, 3000);
+    const int overlayPixels = canvas->property("maskOverlayPixelCount").toInt();
+    QVERIFY(overlayPixels <= canvas->width() * canvas->height());
+    QVERIFY(overlayPixels < image.width() * image.height());
+
+    const QPoint center = canvas->rect().center();
+    QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, center);
+    QVERIFY(qGray(widget.maskImage().pixel(widget.maskImage().rect().center())) > 0);
+    QTRY_COMPARE_WITH_TIMEOUT(
+        widget.findChild<QLabel*>(QStringLiteral("restorationStatus"))->text(),
+        QStringLiteral("updated"), 3000);
 }
 
 void RemovalWidgetTest::acceptsLocalDropAndReportsInvalidInput()

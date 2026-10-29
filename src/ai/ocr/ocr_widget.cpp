@@ -148,9 +148,10 @@ OcrWidget::OcrWidget(QWidget* parent)
     connect(exportButton_, &QPushButton::clicked, this, [this] { chooseExportPath(); });
     connect(clearButton, &QPushButton::clicked, this, [this] { clearAll(); });
     connect(result_, &QTextEdit::textChanged, this, [this] {
-        const bool hasText = !result_->toPlainText().isEmpty();
-        copyButton_->setEnabled(hasText && !workerThread_);
-        exportButton_->setEnabled(hasText && !workerThread_);
+        const bool canUseResult = resultValid_ && !result_->toPlainText().isEmpty()
+            && !workerThread_;
+        copyButton_->setEnabled(canUseResult);
+        exportButton_->setEnabled(canUseResult);
     });
     connect(executable_, &QLineEdit::editingFinished, this, [this] {
         QSettings().setValue(QStringLiteral("ai/ocr/executable"), executable_->text().trimmed());
@@ -194,6 +195,7 @@ bool OcrWidget::importImage(const QString& path)
     }
     ++taskId_;
     imagePath_ = localPath;
+    invalidateResult();
     preview_->setPixmap(QPixmap::fromImage(image).scaled(520, 280, Qt::KeepAspectRatio,
                                                           Qt::SmoothTransformation));
     status_->setText(tr("图片已就绪。识别仅调用本地程序，不会上传图片。"));
@@ -226,6 +228,7 @@ void OcrWidget::startRecognition()
     if (workerThread_) {
         return;
     }
+    invalidateResult();
     const OcrRequest currentRequest = request();
     const OcrResult validation = TesseractOcrEngine::validate(currentRequest);
     if (!validation.ok) {
@@ -282,7 +285,7 @@ void OcrWidget::clearAll()
     imagePath_.clear();
     preview_->setPixmap({});
     preview_->setText(tr("拖放图片到此处，或使用导入、粘贴按钮。"));
-    result_->clear();
+    invalidateResult();
     status_->setText(tr("已清空。等待导入图片。"));
     recognizeButton_->setEnabled(false);
     retryButton_->setEnabled(false);
@@ -290,7 +293,7 @@ void OcrWidget::clearAll()
 
 bool OcrWidget::exportText(const QString& path, QString* error) const
 {
-    if (path.trimmed().isEmpty() || result_->toPlainText().isEmpty()) {
+    if (path.trimmed().isEmpty() || !resultValid_ || result_->toPlainText().isEmpty()) {
         if (error) {
             *error = tr("没有可导出的识别结果或导出路径无效。");
         }
@@ -371,8 +374,16 @@ void OcrWidget::setBusy(bool busy)
     executable_->setEnabled(!busy);
     tessdata_->setEnabled(!busy);
     language_->setEnabled(!busy);
-    copyButton_->setEnabled(!busy && !result_->toPlainText().isEmpty());
-    exportButton_->setEnabled(!busy && !result_->toPlainText().isEmpty());
+    copyButton_->setEnabled(!busy && resultValid_ && !result_->toPlainText().isEmpty());
+    exportButton_->setEnabled(!busy && resultValid_ && !result_->toPlainText().isEmpty());
+}
+
+void OcrWidget::invalidateResult()
+{
+    resultValid_ = false;
+    result_->clear();
+    copyButton_->setEnabled(false);
+    exportButton_->setEnabled(false);
 }
 
 void OcrWidget::finishRecognition(quint64 taskId, const OcrResult& recognized)
@@ -381,7 +392,10 @@ void OcrWidget::finishRecognition(quint64 taskId, const OcrResult& recognized)
         return;
     }
     if (recognized.ok) {
+        resultValid_ = true;
         result_->setPlainText(recognized.text);
+    } else {
+        invalidateResult();
     }
     setBusy(false);
     status_->setText(recognized.message);

@@ -6,6 +6,7 @@
 #include "ui/widgets/tool_card.h"
 #include "ui/widgets/tool_grid.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QLabel>
 #include <QLineEdit>
@@ -105,11 +106,20 @@ void GameWidgetsTest::keyboardChangesStateAndControlsPauseRestart()
     QVERIFY(guessStart);
     QVERIFY(guessPause->isVisible());
     guessStart->click();
+    guessInput->setText(QStringLiteral("42"));
     QTest::keyClick(guessInput, Qt::Key_Space);
     QCOMPARE(guessStatus->text(), QStringLiteral("已暂停"));
-    QVERIFY(!guessInput->isEnabled());
-    guessPause->click();
     QVERIFY(guessInput->isEnabled());
+    QVERIFY(guessInput->isReadOnly());
+    QCOMPARE(QApplication::focusWidget(), guessInput);
+    QTest::keyClick(guessInput, Qt::Key_Space);
+    QVERIFY(!guessInput->isReadOnly());
+    QCOMPARE(guessStatus->text(), QStringLiteral("请输入 1 到 100 之间的数字"));
+    QCOMPARE(QApplication::focusWidget(), guessInput);
+    QTest::keyClick(guessInput, Qt::Key_R);
+    QVERIFY(guessInput->text().isEmpty());
+    QVERIFY(!guessInput->isReadOnly());
+    QCOMPARE(guessStatus->text(), QStringLiteral("请输入 1 到 100 之间的数字"));
 
     std::unique_ptr<QWidget> widget(registry.find(QStringLiteral("game-2048"))->createWidget());
     widget->show();

@@ -74,7 +74,9 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const QString imagePath = createImage(directory, QStringLiteral("exam-page.png"));
+    const QString replacementPath = createImage(directory, QStringLiteral("replacement-page.png"));
     QVERIFY(!imagePath.isEmpty());
+    QVERIFY(!replacementPath.isEmpty());
 
     OcrWidget widget;
     widget.show();
@@ -84,6 +86,7 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     auto* status = widget.findChild<QLabel*>(QStringLiteral("ocrStatus"));
     auto* result = widget.findChild<QTextEdit*>(QStringLiteral("ocrResult"));
     auto* copy = widget.findChild<QPushButton*>(QStringLiteral("ocrCopyButton"));
+    auto* exportButton = widget.findChild<QPushButton*>(QStringLiteral("ocrExportButton"));
     auto* cancel = widget.findChild<QPushButton*>(QStringLiteral("ocrCancelButton"));
     QVERIFY(executable);
     QVERIFY(language);
@@ -91,6 +94,7 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(status);
     QVERIFY(result);
     QVERIFY(copy);
+    QVERIFY(exportButton);
     QVERIFY(cancel);
 
     executable->setText(fixtureExecutable());
@@ -116,6 +120,22 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
 
     const QString markdownExport = directory.filePath(QStringLiteral("result.md"));
     QVERIFY(widget.exportText(markdownExport, &error));
+
+    QVERIFY(widget.importImage(replacementPath));
+    QVERIFY(result->toPlainText().isEmpty());
+    QVERIFY(!copy->isEnabled());
+    QVERIFY(!exportButton->isEnabled());
+    QVERIFY(!widget.exportText(directory.filePath(QStringLiteral("stale.txt")), &error));
+
+    language->setText(QStringLiteral("fail"));
+    widget.startRecognition();
+    QVERIFY(result->toPlainText().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("失败")), 3000);
+    QVERIFY(result->toPlainText().isEmpty());
+    QVERIFY(!copy->isEnabled());
+    QVERIFY(!exportButton->isEnabled());
+    QVERIFY(!widget.exportText(directory.filePath(QStringLiteral("failed.txt")), &error));
+
     widget.clearAll();
     QVERIFY(result->toPlainText().isEmpty());
     QVERIFY(status->text().contains(QStringLiteral("已清空")));
