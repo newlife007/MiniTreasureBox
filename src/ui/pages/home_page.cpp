@@ -3,8 +3,11 @@
 #include "core/settings.h"
 #include "core/tool_history.h"
 #include "core/tool_registry.h"
+#include "ui/widgets/local_file_search_widget.h"
 #include "ui/widgets/tool_grid.h"
 
+#include <QComboBox>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QSet>
@@ -21,11 +24,17 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     , settings_(settings)
     , history_(history)
     , heading_(new QLabel(tr("工具首页"), this))
+    , searchMode_(new QComboBox(this))
     , search_(new QLineEdit(this))
     , resultState_(new QLabel(this))
     , toolGrid_(new ToolGrid(this))
+    , localFileSearch_(new LocalFileSearchWidget(this))
 {
     heading_->setObjectName(QStringLiteral("pageHeading"));
+    searchMode_->setObjectName(QStringLiteral("searchModeSelector"));
+    searchMode_->addItem(tr("工具搜索"), QStringLiteral("tools"));
+    searchMode_->addItem(tr("本地文件"), QStringLiteral("files"));
+    searchMode_->setAccessibleName(tr("搜索模式"));
     search_->setObjectName(QStringLiteral("globalSearch"));
     resultState_->setObjectName(QStringLiteral("resultState"));
     QFont headingFont = heading_->font();
@@ -42,15 +51,29 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     resultState_->setWordWrap(true);
     resultState_->setAccessibleName(tr("工具列表状态"));
 
+    auto* searchLayout = new QHBoxLayout;
+    searchLayout->setContentsMargins(0, 0, 0, 0);
+    searchLayout->addWidget(searchMode_);
+    searchLayout->addWidget(search_, 1);
+
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(8, 8, 8, 8);
     layout->setSpacing(10);
     layout->addWidget(heading_);
-    layout->addWidget(search_);
+    layout->addLayout(searchLayout);
     layout->addWidget(resultState_);
     layout->addWidget(toolGrid_, 1);
+    layout->addWidget(localFileSearch_, 1);
 
-    connect(search_, &QLineEdit::textChanged, this, &HomePage::refreshToolGrid);
+    connect(search_, &QLineEdit::textChanged, this, [this](const QString& query) {
+        if (searchMode_->currentData().toString() == QStringLiteral("files")) {
+            localFileSearch_->setQuery(query);
+        } else {
+            refreshToolGrid();
+        }
+    });
+    connect(searchMode_, &QComboBox::currentIndexChanged, this,
+            &HomePage::updateSearchMode);
     connect(toolGrid_, &ToolGrid::toolOpenRequested,
             this, &HomePage::toolOpenRequested);
     connect(toolGrid_, &ToolGrid::favoriteToggleRequested, this,
@@ -60,6 +83,7 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
                 emit favoriteChanged(id, favorite);
             });
 
+    updateSearchMode();
     refresh();
 }
 
@@ -140,8 +164,35 @@ QList<ToolMetadata> HomePage::visibleTools() const
     return filtered;
 }
 
+void HomePage::updateSearchMode()
+{
+    const bool fileMode = searchMode_->currentData().toString() == QStringLiteral("files");
+    search_->setPlaceholderText(fileMode
+                                    ? tr("搜索本地文件名、目录名或文件内容")
+                                    : tr("搜索名称、分类、描述、关键词或别名"));
+    search_->setAccessibleName(fileMode ? tr("本地文件搜索") : tr("全局工具搜索"));
+    search_->setAccessibleDescription(
+        fileMode ? tr("输入文字以搜索所选目录中的本地文件")
+                 : tr("输入文字以筛选当前页面中的工具卡片"));
+    localFileSearch_->setVisible(fileMode);
+    resultState_->setVisible(false);
+    toolGrid_->setVisible(false);
+    if (fileMode) {
+        localFileSearch_->setQuery(search_->text());
+    } else {
+        localFileSearch_->setQuery({});
+        refreshToolGrid();
+    }
+}
+
 void HomePage::refreshToolGrid()
 {
+    if (searchMode_->currentData().toString() == QStringLiteral("files")) {
+        toolGrid_->hide();
+        resultState_->hide();
+        return;
+    }
+
     const QList<ToolMetadata> tools = visibleTools();
     const QStringList favoriteIds = settings_.favoriteToolIds();
     toolGrid_->setTools(tools, QSet<QString>(favoriteIds.cbegin(), favoriteIds.cend()));

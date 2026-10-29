@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Concurrent Gui Widgets)
 
 add_library(minitreasurebox_foundation STATIC
     src/ai/handwriting_removal/removal_engine.cpp
@@ -24,6 +24,8 @@ add_library(minitreasurebox_foundation STATIC
     src/app/application.h
     src/app/main_window.cpp
     src/app/main_window.h
+    src/core/local_file_search.cpp
+    src/core/local_file_search.h
     src/core/settings.cpp
     src/core/settings.h
     src/core/tool.h
@@ -45,6 +47,8 @@ add_library(minitreasurebox_foundation STATIC
     src/domain/tools/tool_widgets.h
     src/ui/pages/home_page.cpp
     src/ui/pages/home_page.h
+    src/ui/widgets/local_file_search_widget.cpp
+    src/ui/widgets/local_file_search_widget.h
     src/ui/widgets/tool_card.cpp
     src/ui/widgets/tool_card.h
     src/ui/widgets/tool_grid.cpp
@@ -55,7 +59,7 @@ target_include_directories(minitreasurebox_foundation PUBLIC src)
 target_compile_definitions(minitreasurebox_foundation PRIVATE
     MINITREASUREBOX_VERSION="${PROJECT_VERSION}"
 )
-target_link_libraries(minitreasurebox_foundation PUBLIC Qt6::Core Qt6::Gui Qt6::Widgets)
+target_link_libraries(minitreasurebox_foundation PUBLIC Qt6::Core Qt6::Concurrent Qt6::Gui Qt6::Widgets)
 
 add_executable(MiniTreasureBox src/main.cpp)
 target_link_libraries(MiniTreasureBox PRIVATE minitreasurebox_foundation)
@@ -127,6 +131,11 @@ if(BUILD_TESTING)
     add_test(NAME removal_widget COMMAND test_removal_widget)
 
     set_tests_properties(tool_logic shell_interactions tool_cards game_widgets ocr_engine ocr_widget removal_engine removal_widget PROPERTIES
+    add_executable(test_local_file_search tests/unit/test_local_file_search.cpp)
+    target_link_libraries(test_local_file_search PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME local_file_search COMMAND test_local_file_search)
+
+    set_tests_properties(tool_logic shell_interactions tool_cards local_file_search PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()
