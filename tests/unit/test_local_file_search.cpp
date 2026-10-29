@@ -11,9 +11,12 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QFutureWatcher>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QPromise>
 #include <QPushButton>
 #include <QSettings>
 #include <QSignalSpy>
@@ -104,6 +107,8 @@ void LocalFileSearchTest::skipsUnsafeContentAndBoundsResults()
     writeFile(root.filePath(QStringLiteral("oversized.txt")), QByteArray(65, 'x') + "needle");
 #ifdef Q_OS_UNIX
     const QString unreadablePath = root.filePath(QStringLiteral("unreadable.txt"));
+    writeFile(unreadablePath, "needle");
+    QVERIFY(QFile::setPermissions(unreadablePath, QFileDevice::WriteOwner));
 #endif
     for (int index = 0; index < 6; ++index) {
         writeFile(root.filePath(QStringLiteral("match-%1.txt").arg(index)), "safe");
@@ -118,11 +123,6 @@ void LocalFileSearchTest::skipsUnsafeContentAndBoundsResults()
     }
     QVERIFY2(unsafeResults.isEmpty(), qPrintable(unsafePaths.join(QLatin1Char(','))));
 #ifdef Q_OS_UNIX
-    writeFile(unreadablePath, "needle");
-    QVERIFY(QFile::setPermissions(unreadablePath, {}));
-    if (!QFileInfo(unreadablePath).isReadable()) {
-        QVERIFY(LocalFileSearch::search(contentRequest).isEmpty());
-    }
     QVERIFY(QFile::setPermissions(unreadablePath, QFileDevice::ReadOwner
                                                       | QFileDevice::WriteOwner));
 #endif
@@ -194,12 +194,49 @@ void LocalFileSearchTest::modeSwitchAndAsynchronousStaleSuppression()
     QVERIFY(!grid->isVisible());
     QVERIFY(query->placeholderText().contains(QStringLiteral("本地")));
 
+    using SearchResults = QList<LocalFileSearchResult>;
+    QPromise<SearchResults> oldCompletion;
+    QPromise<SearchResults> newCompletion;
+    oldCompletion.start();
+    newCompletion.start();
+    QStringList requestedQueries;
+    local->setSearchStarter(
+        [&oldCompletion, &newCompletion, &requestedQueries](
+            const LocalFileSearchRequest& request) {
+            requestedQueries.append(request.query);
+            return request.query == QStringLiteral("old-result")
+                ? oldCompletion.future()
+                : newCompletion.future();
+        });
+    QSignalSpy resultsSpy(local, &LocalFileSearchWidget::resultsChanged);
+
     query->setText(QStringLiteral("old-result"));
-    QTest::qWait(275);
+    QTRY_VERIFY_WITH_TIMEOUT(requestedQueries.contains(QStringLiteral("old-result")),
+                             2000);
     query->setText(QStringLiteral("new-unique"));
-    QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 5000);
+    QTRY_VERIFY_WITH_TIMEOUT(requestedQueries.contains(QStringLiteral("new-unique")),
+                             2000);
+
+    SearchResults newResults;
+    newResults.append({root.filePath(QStringLiteral("new-unique-result.txt")), false,
+                       true, false});
+    newCompletion.addResult(newResults);
+    newCompletion.finish();
+    QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 2000);
     QCOMPARE(list->item(0)->data(Qt::UserRole).toString(),
              root.filePath(QStringLiteral("new-unique-result.txt")));
+    QCOMPARE(resultsSpy.count(), 1);
+
+    SearchResults oldResults;
+    oldResults.append({root.filePath(QStringLiteral("old-result.txt")), false, true,
+                       false});
+    oldCompletion.addResult(oldResults);
+    oldCompletion.finish();
+    QTRY_VERIFY_WITH_TIMEOUT(local->findChildren<QFutureWatcherBase*>().isEmpty(), 2000);
+    QCOMPARE(list->count(), 1);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(),
+             root.filePath(QStringLiteral("new-unique-result.txt")));
+    QCOMPARE(resultsSpy.count(), 1);
 
     mode->setCurrentIndex(mode->findData(QStringLiteral("tools")));
     QVERIFY(!local->isVisible());

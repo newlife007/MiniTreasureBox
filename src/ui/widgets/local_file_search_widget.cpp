@@ -28,6 +28,11 @@ LocalFileSearchWidget::LocalFileSearchWidget(QWidget* parent)
     , status_(new QLabel(this))
     , resultList_(new QListWidget(this))
     , debounceTimer_(new QTimer(this))
+    , searchStarter_([](const LocalFileSearchRequest& request) {
+        return QtConcurrent::run([request] {
+            return LocalFileSearch::search(request);
+        });
+    })
     , urlLauncher_([](const QUrl& url) { return QDesktopServices::openUrl(url); })
 {
     setObjectName(QStringLiteral("localFileSearchWidget"));
@@ -115,6 +120,11 @@ void LocalFileSearchWidget::setRootDirectory(const QString& path)
     scheduleSearch();
 }
 
+void LocalFileSearchWidget::setSearchStarter(SearchStarter searchStarter)
+{
+    searchStarter_ = std::move(searchStarter);
+}
+
 void LocalFileSearchWidget::setUrlLauncher(UrlLauncher launcher)
 {
     urlLauncher_ = std::move(launcher);
@@ -170,9 +180,7 @@ void LocalFileSearchWidget::startSearch()
                 }
                 displayResults(found);
             });
-    watcher->setFuture(QtConcurrent::run([request] {
-        return LocalFileSearch::search(request);
-    }));
+    watcher->setFuture(searchStarter_(request));
 }
 
 void LocalFileSearchWidget::displayResults(const QList<LocalFileSearchResult>& results)

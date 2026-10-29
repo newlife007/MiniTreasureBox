@@ -2,6 +2,7 @@
 
 #include "core/local_file_search.h"
 
+#include <QFuture>
 #include <QUrl>
 #include <QWidget>
 
@@ -21,6 +22,8 @@ class LocalFileSearchWidget final : public QWidget {
     Q_OBJECT
 
 public:
+    using SearchStarter = std::function<QFuture<QList<LocalFileSearchResult>>(
+        const LocalFileSearchRequest&)>;
     using UrlLauncher = std::function<bool(const QUrl&)>;
 
     explicit LocalFileSearchWidget(QWidget* parent = nullptr);
@@ -28,6 +31,7 @@ public:
 
     void setQuery(const QString& query);
     void setRootDirectory(const QString& path);
+    void setSearchStarter(SearchStarter searchStarter);
     void setUrlLauncher(UrlLauncher launcher);
     [[nodiscard]] QList<LocalFileSearchResult> results() const;
 
@@ -51,6 +55,7 @@ private:
     QList<LocalFileSearchResult> results_;
     std::shared_ptr<std::atomic_bool> cancellation_;
     quint64 generation_{0};
+    SearchStarter searchStarter_;
     UrlLauncher urlLauncher_;
 };
 

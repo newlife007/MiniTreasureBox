@@ -6,6 +6,10 @@
 #include <QFileInfo>
 #include <QStringDecoder>
 
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#endif
+
 namespace mtb {
 namespace {
 
@@ -14,11 +18,23 @@ bool isCancelled(const LocalFileSearchRequest& request)
     return request.cancelled && request.cancelled->load(std::memory_order_relaxed);
 }
 
-bool contentMatches(const QFileInfo& info, const QString& query, qsizetype maximumBytes)
+bool hasReadPermission(const QFileInfo& info)
 {
+#ifdef Q_OS_UNIX
+    struct stat status {};
+    const QByteArray encodedPath = QFile::encodeName(info.absoluteFilePath());
+    return ::stat(encodedPath.constData(), &status) == 0
+        && (status.st_mode & (S_IRUSR | S_IRGRP | S_IROTH));
+#else
     constexpr auto readPermissions = QFileDevice::ReadOwner | QFileDevice::ReadUser
         | QFileDevice::ReadGroup | QFileDevice::ReadOther;
-    if (!info.isReadable() || !(info.permissions() & readPermissions)
+    return info.permissions() & readPermissions;
+#endif
+}
+
+bool contentMatches(const QFileInfo& info, const QString& query, qsizetype maximumBytes)
+{
+    if (!info.isReadable() || !hasReadPermission(info)
         || info.size() < 0 || info.size() > maximumBytes) {
         return false;
     }
