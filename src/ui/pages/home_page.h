@@ -5,11 +5,13 @@
 
 #include "core/tool.h"
 
+class QComboBox;
 class QLabel;
 class QLineEdit;
 
 namespace mtb {
 
+class LocalFileSearchWidget;
 class Settings;
 class ToolGrid;
 class ToolHistory;
@@ -44,6 +46,7 @@ private:
     };
 
     [[nodiscard]] QList<ToolMetadata> visibleTools() const;
+    void updateSearchMode();
     void refreshToolGrid();
 
     ToolRegistry& registry_;
@@ -53,9 +56,11 @@ private:
     QStringList categories_;
 
     QLabel* heading_;
+    QComboBox* searchMode_;
     QLineEdit* search_;
     QLabel* resultState_;
     ToolGrid* toolGrid_;
+    LocalFileSearchWidget* localFileSearch_;
 };
 
 }  // namespace mtb
