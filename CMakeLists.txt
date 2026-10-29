@@ -23,6 +23,12 @@ add_library(minitreasurebox_foundation STATIC
     src/core/tool_history.h
     src/core/tool_registry.cpp
     src/core/tool_registry.h
+    src/domain/games/game_logic.cpp
+    src/domain/games/game_logic.h
+    src/domain/games/game_settings.cpp
+    src/domain/games/game_settings.h
+    src/domain/games/game_widgets.cpp
+    src/domain/games/game_widgets.h
     src/domain/tools/builtin_tools.cpp
     src/domain/tools/builtin_tools.h
     src/domain/tools/tool_logic.cpp
@@ -83,7 +89,15 @@ if(BUILD_TESTING)
     target_link_libraries(test_tool_cards PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME tool_cards COMMAND test_tool_cards)
 
-    set_tests_properties(tool_logic shell_interactions tool_cards PROPERTIES
+    add_executable(test_game_logic tests/unit/test_game_logic.cpp)
+    target_link_libraries(test_game_logic PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME game_logic COMMAND test_game_logic)
+
+    add_executable(test_game_widgets tests/unit/test_game_widgets.cpp)
+    target_link_libraries(test_game_widgets PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME game_widgets COMMAND test_game_widgets)
+
+    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

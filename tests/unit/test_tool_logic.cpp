@@ -217,7 +217,7 @@ void ToolLogicTest::builtinRegistration()
 {
     ToolRegistry registry;
     registerBuiltinTools(registry);
-    QCOMPARE(registry.all().size(), 6);
+    QCOMPARE(registry.all().size(), 11);
     for (const auto& tool : registry.all()) {
         const ToolMetadata metadata = tool->metadata();
         QVERIFY(!metadata.id.isEmpty());
