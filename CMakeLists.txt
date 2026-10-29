@@ -12,6 +12,10 @@ set(CMAKE_AUTORCC ON)
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 
 add_library(minitreasurebox_foundation STATIC
+    src/ai/handwriting_removal/removal_engine.cpp
+    src/ai/handwriting_removal/removal_engine.h
+    src/ai/handwriting_removal/removal_widget.cpp
+    src/ai/handwriting_removal/removal_widget.h
     src/ai/ocr/ocr_engine.cpp
     src/ai/ocr/ocr_engine.h
     src/ai/ocr/ocr_widget.cpp
@@ -114,7 +118,15 @@ if(BUILD_TESTING)
     add_dependencies(test_ocr_widget fake_tesseract)
     add_test(NAME ocr_widget COMMAND test_ocr_widget)
 
-    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets ocr_engine ocr_widget PROPERTIES
+    add_executable(test_removal_engine tests/unit/test_removal_engine.cpp)
+    target_link_libraries(test_removal_engine PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME removal_engine COMMAND test_removal_engine)
+
+    add_executable(test_removal_widget tests/unit/test_removal_widget.cpp)
+    target_link_libraries(test_removal_widget PRIVATE minitreasurebox_foundation Qt6::Test)
+    add_test(NAME removal_widget COMMAND test_removal_widget)
+
+    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets ocr_engine ocr_widget removal_engine removal_widget PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

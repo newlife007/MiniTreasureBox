@@ -1,0 +1,210 @@
+#include "ai/handwriting_removal/removal_widget.h"
+#include "app/main_window.h"
+#include "core/settings.h"
+#include "core/tool_history.h"
+#include "core/tool_registry.h"
+#include "domain/tools/builtin_tools.h"
+#include "ui/widgets/tool_card.h"
+#include "ui/widgets/tool_grid.h"
+
+#include <QApplication>
+#include <QComboBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QImage>
+#include <QLabel>
+#include <QListWidget>
+#include <QMimeData>
+#include <QPushButton>
+#include <QSettings>
+#include <QSlider>
+#include <QSpinBox>
+#include <QStackedWidget>
+#include <QTemporaryDir>
+#include <QTest>
+#include <QUrl>
+
+using namespace mtb;
+using namespace mtb::handwriting;
+
+namespace {
+
+QString createPage(QTemporaryDir& directory, const QString& name)
+{
+    QImage image(80, 60, QImage::Format_RGB32);
+    image.fill(QColor(248, 246, 240));
+    for (int x = 20; x < 60; ++x) image.setPixelColor(x, 30, QColor(25, 70, 190));
+    const QString path = directory.filePath(name);
+    return image.save(path, "PNG") ? path : QString();
+}
+
+QListWidgetItem* itemWithText(QListWidget* list, const QString& text)
+{
+    for (int row = 0; row < list->count(); ++row) {
+        if (list->item(row)->text().trimmed() == text) return list->item(row);
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+class RemovalWidgetTest final : public QObject {
+    Q_OBJECT
+
+private slots:
+    void importsProcessesEditsViewsAndExports();
+    void acceptsLocalDropAndReportsInvalidInput();
+    void registryNavigationOpensOfflineTool();
+};
+
+void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = createPage(directory, QStringLiteral("private-exam.png"));
+    QVERIFY(!path.isEmpty());
+
+    HandwritingRemovalWidget widget;
+    widget.resize(900, 600);
+    widget.show();
+    auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+    auto* view = widget.findChild<QComboBox*>(QStringLiteral("restorationViewSelector"));
+    auto* automatic = widget.findChild<QPushButton*>(QStringLiteral("restorationAutoButton"));
+    auto* clear = widget.findChild<QPushButton*>(QStringLiteral("restorationClearButton"));
+    auto* undo = widget.findChild<QPushButton*>(QStringLiteral("restorationUndoButton"));
+    auto* redo = widget.findChild<QPushButton*>(QStringLiteral("restorationRedoButton"));
+    auto* brush = widget.findChild<QPushButton*>(QStringLiteral("restorationBrushButton"));
+    auto* eraser = widget.findChild<QPushButton*>(QStringLiteral("restorationEraserButton"));
+    auto* rectangle = widget.findChild<QPushButton*>(QStringLiteral("restorationRectangleButton"));
+    auto* canvas = widget.findChild<QWidget*>(QStringLiteral("restorationCanvas"));
+    QVERIFY(status);
+    QVERIFY(view);
+    QVERIFY(automatic);
+    QVERIFY(clear);
+    QVERIFY(undo);
+    QVERIFY(redo);
+    QVERIFY(brush);
+    QVERIFY(eraser);
+    QVERIFY(rectangle);
+    QVERIFY(canvas);
+
+    QVERIFY(widget.importImage(path));
+    const QImage original = widget.originalImage().copy();
+    QVERIFY(automatic->isEnabled());
+    widget.startAutomaticProcessing();
+    QVERIFY(status->text().contains(QStringLiteral("正在")));
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.resultImage().isNull()
+                             && qGray(widget.maskImage().pixel(40, 30)) == 255, 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(automatic->isEnabled(), 3000);
+    QCOMPARE(widget.originalImage(), original);
+
+    QCOMPARE(view->count(), 3);
+    view->setCurrentIndex(0);
+    QCOMPARE(view->currentText(), QStringLiteral("原图"));
+    view->setCurrentIndex(2);
+    QCOMPARE(view->currentText(), QStringLiteral("结果"));
+    QVERIFY(widget.findChild<QPushButton*>(QStringLiteral("restorationBrushButton")));
+    QVERIFY(widget.findChild<QPushButton*>(QStringLiteral("restorationEraserButton")));
+    QVERIFY(widget.findChild<QPushButton*>(QStringLiteral("restorationRectangleButton")));
+    QVERIFY(widget.findChild<QPushButton*>(QStringLiteral("restorationCompareButton")));
+    QVERIFY(widget.findChild<QSpinBox*>(QStringLiteral("restorationBrushSize")));
+    QVERIFY(widget.findChild<QSlider*>(QStringLiteral("restorationMaskOpacity")));
+
+    const QImage automaticMask = widget.maskImage().copy();
+    QVERIFY(brush->isChecked());
+    eraser->click();
+    QVERIFY(eraser->isChecked());
+    QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, canvas->rect().center());
+    const QImage erasedMask = widget.maskImage().copy();
+    QVERIFY(erasedMask != automaticMask);
+    QVERIFY(undo->isEnabled());
+    undo->click();
+    QCOMPARE(widget.maskImage(), automaticMask);
+    QVERIFY(redo->isEnabled());
+    redo->click();
+    QCOMPARE(widget.maskImage(), erasedMask);
+    brush->click();
+    QTest::mouseClick(canvas, Qt::LeftButton, Qt::NoModifier, canvas->rect().center());
+    QVERIFY(widget.maskImage() != erasedMask);
+    rectangle->click();
+    QVERIFY(rectangle->isChecked());
+
+    const QImage editedMask = widget.maskImage().copy();
+    clear->click();
+    QVERIFY(widget.maskImage() != editedMask);
+    undo->click();
+    QCOMPARE(widget.maskImage(), editedMask);
+
+    const QString exportPath = directory.filePath(QStringLiteral("restored.png"));
+    QString error;
+    QVERIFY(widget.exportPng(exportPath, &error));
+    QImage exported(exportPath);
+    QVERIFY(!exported.isNull());
+    QCOMPARE(exported.size(), original.size());
+    QCOMPARE(widget.originalImage(), original);
+}
+
+void RemovalWidgetTest::acceptsLocalDropAndReportsInvalidInput()
+{
+    QTemporaryDir directory;
+    const QString path = createPage(directory, QStringLiteral("dropped.png"));
+    HandwritingRemovalWidget widget;
+    widget.show();
+
+    QVERIFY(!widget.importImage(directory.filePath(QStringLiteral("missing.png"))));
+    QVERIFY(widget.findChild<QLabel*>(QStringLiteral("restorationStatus"))->text()
+                .contains(QStringLiteral("无法读取")));
+
+    auto* mime = new QMimeData;
+    mime->setUrls({QUrl::fromLocalFile(path)});
+    QDragEnterEvent enter(QPoint(5, 5), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&widget, &enter);
+    QVERIFY(enter.isAccepted());
+    QDropEvent drop(QPointF(5, 5), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&widget, &drop);
+    QVERIFY(drop.isAccepted());
+    QVERIFY(!widget.originalImage().isNull());
+    delete mime;
+}
+
+void RemovalWidgetTest::registryNavigationOpensOfflineTool()
+{
+    QTemporaryDir directory;
+    QSettings storage(directory.filePath(QStringLiteral("restoration-navigation.ini")),
+                      QSettings::IniFormat);
+    Settings settings(storage);
+    ToolHistory history(storage);
+    ToolRegistry registry;
+    registerBuiltinTools(registry);
+    const auto tool = registry.find(QStringLiteral("exam-restoration"));
+    QVERIFY(tool);
+    QCOMPARE(tool->metadata().name, QStringLiteral("试卷复原小工具"));
+    QCOMPARE(tool->metadata().category, QStringLiteral("AI 工具"));
+    QVERIFY(!tool->metadata().requiresNetwork);
+
+    MainWindow window(registry, settings, history);
+    window.show();
+    QCoreApplication::processEvents();
+    auto* navigation = window.findChild<QListWidget*>(QStringLiteral("mainNavigation"));
+    auto* grid = window.findChild<ToolGrid*>(QStringLiteral("toolGrid"));
+    auto* pages = window.findChild<QStackedWidget*>(QStringLiteral("mainPages"));
+    QVERIFY(navigation);
+    QVERIFY(grid);
+    QVERIFY(pages);
+    QListWidgetItem* item = itemWithText(navigation, QStringLiteral("AI 工具"));
+    QVERIFY(item);
+    QTest::mouseClick(navigation->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      navigation->visualItemRect(item).center());
+    QCoreApplication::processEvents();
+    QVERIFY(grid->toolIds().contains(QStringLiteral("exam-restoration")));
+    ToolCard* card = grid->cardForTool(QStringLiteral("exam-restoration"));
+    QVERIFY(card);
+    card->findChild<QPushButton*>(QStringLiteral("openButton"))->click();
+    QCoreApplication::processEvents();
+    QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("toolPage_exam-restoration"));
+    QVERIFY(pages->currentWidget()->findChild<HandwritingRemovalWidget*>(
+        QStringLiteral("handwritingRemovalWidget")));
+}
+
+QTEST_MAIN(RemovalWidgetTest)
+#include "test_removal_widget.moc"

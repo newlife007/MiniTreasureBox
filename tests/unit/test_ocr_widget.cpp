@@ -174,7 +174,8 @@ void OcrWidgetTest::registryNavigationOpensOfflineTool()
     QTest::mouseClick(navigation->viewport(), Qt::LeftButton, Qt::NoModifier,
                       navigation->visualItemRect(aiItem).center());
     QCoreApplication::processEvents();
-    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("image-ocr")});
+    QCOMPARE(grid->toolIds(),
+             QStringList({QStringLiteral("image-ocr"), QStringLiteral("exam-restoration")}));
     ToolCard* card = grid->cardForTool(QStringLiteral("image-ocr"));
     QVERIFY(card);
     card->findChild<QPushButton*>(QStringLiteral("openButton"))->click();

@@ -1,5 +1,6 @@
 #include "domain/tools/builtin_tools.h"
 
+#include "ai/handwriting_removal/removal_widget.h"
 #include "ai/ocr/ocr_widget.h"
 #include "core/tool_registry.h"
 #include "domain/games/game_widgets.h"
@@ -129,6 +130,18 @@ void registerBuiltinTools(ToolRegistry& registry)
          QStringLiteral("insert-text"),
          false},
         ocr::createOcrWidget);
+
+    add(registry,
+        {QStringLiteral("exam-restoration"),
+         QStringLiteral("试卷复原小工具"),
+         QStringLiteral("AI 工具"),
+         QStringLiteral("使用保守的本地图像基线提出手写 Mask，并支持人工修正和背景填充。"),
+         {QStringLiteral("试卷复原"), QStringLiteral("去手写"), QStringLiteral("mask"),
+          QStringLiteral("handwriting"), QStringLiteral("exam restoration")},
+         {QStringLiteral("Handwriting removal"), QStringLiteral("试卷去手写")},
+         QStringLiteral("draw-eraser"),
+         false},
+        handwriting::createHandwritingRemovalWidget);
 
     add(registry,
         {QStringLiteral("guess-number"),
