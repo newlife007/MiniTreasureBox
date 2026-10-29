@@ -7,14 +7,11 @@
 
 class QLabel;
 class QLineEdit;
-class QListWidget;
-class QListWidgetItem;
-class QTreeWidget;
-class QTreeWidgetItem;
 
 namespace mtb {
 
 class Settings;
+class ToolGrid;
 class ToolHistory;
 class ToolRegistry;
 
@@ -47,25 +44,18 @@ private:
     };
 
     [[nodiscard]] QList<ToolMetadata> visibleTools() const;
-    void refreshToolList();
-    void refreshFavorites();
-    void refreshRecent();
-    void addStoredTools(QListWidget* list, const QStringList& ids, const QString& emptyText);
-    void requestOpen(QListWidgetItem* item);
+    void refreshToolGrid();
 
     ToolRegistry& registry_;
     Settings& settings_;
     ToolHistory& history_;
     View view_{View::All};
     QStringList categories_;
-    bool refreshing_{false};
 
     QLabel* heading_;
     QLineEdit* search_;
     QLabel* resultState_;
-    QTreeWidget* toolList_;
-    QListWidget* favoritesList_;
-    QListWidget* recentList_;
+    ToolGrid* toolGrid_;
 };
 
 }  // namespace mtb
