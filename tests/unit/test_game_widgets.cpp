@@ -182,10 +182,8 @@ void GameWidgetsTest::gameNavigationOpensEveryFactory()
         QVERIFY(pages->currentWidget()->findChild<QWidget*>(QStringLiteral("gameSurface")));
         QTest::keyClick(&window, Qt::Key_Escape);
         QCoreApplication::processEvents();
-        gamesItem = itemWithText(navigation, QStringLiteral("小游戏"));
-        QTest::mouseClick(navigation->viewport(), Qt::LeftButton, Qt::NoModifier,
-                          navigation->visualItemRect(gamesItem).center());
-        QCoreApplication::processEvents();
+        QCOMPARE(navigation->currentItem(), gamesItem);
+        QCOMPARE(grid->toolIds(), gameIds);
     }
 }
 

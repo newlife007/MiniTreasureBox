@@ -89,10 +89,14 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
     auto* escapeShortcut = new QShortcut(QKeySequence(Qt::Key_Escape), this);
     escapeShortcut->setContext(Qt::ApplicationShortcut);
     connect(escapeShortcut, &QShortcut::activated, this, [this] {
-        if (pages_->currentWidget() != homePage_) {
-            returnHome();
-        } else {
+        if (pages_->currentWidget() == toolPage_) {
+            returnToPreviousView();
+        } else if (pages_->currentWidget() == homePage_) {
             homePage_->clearSearch();
+            homePage_->showHome();
+            navigation_->setCurrentRow(0);
+        } else {
+            pages_->setCurrentWidget(homePage_);
             homePage_->showHome();
             navigation_->setCurrentRow(0);
         }
@@ -260,9 +264,12 @@ void MainWindow::showToolOverview(const QString& toolId)
                 homePage_->refresh();
             });
 
-    auto* backButton = new QPushButton(tr("返回首页"), toolPage_);
-    backButton->setToolTip(tr("返回工具首页（Esc）"));
-    connect(backButton, &QPushButton::clicked, this, &MainWindow::returnHome);
+    auto* backButton = new QPushButton(tr("返回上一页"), toolPage_);
+    backButton->setObjectName(QStringLiteral("backButton"));
+    backButton->setToolTip(tr("返回打开此工具前的工具列表（Esc）"));
+    backButton->setAccessibleName(tr("返回上一页"));
+    backButton->setAccessibleDescription(tr("返回打开此工具前的工具列表"));
+    connect(backButton, &QPushButton::clicked, this, &MainWindow::returnToPreviousView);
 
     auto* headerActions = new QHBoxLayout;
     headerActions->addWidget(category);
@@ -287,11 +294,9 @@ void MainWindow::showToolOverview(const QString& toolId)
     pages_->setCurrentWidget(toolPage_);
 }
 
-void MainWindow::returnHome()
+void MainWindow::returnToPreviousView()
 {
     pages_->setCurrentWidget(homePage_);
-    navigation_->setCurrentRow(0);
-    homePage_->showHome();
 }
 
 void MainWindow::applyTheme(Theme theme)
