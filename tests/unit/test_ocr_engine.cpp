@@ -162,7 +162,9 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
 
     ScopedEnvironment noExecutableOverride("MINITREASUREBOX_TESSERACT", QByteArray());
     ScopedEnvironment noDataOverride("TESSDATA_PREFIX", QByteArray());
+#ifndef Q_OS_WIN
     ScopedEnvironment restrictedPath("PATH", directory.filePath(QStringLiteral("empty-path")).toUtf8());
+#endif
 
     const OcrRequest unresolved{imagePath, {}, {}, QStringLiteral("chi_sim+eng"), 2000};
     const OcrRequest packaged = TesseractOcrEngine::resolvedRequest(unresolved, applicationDir);
@@ -206,7 +208,12 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
                                                      | QFileDevice::ExeGroup
                                                      | QFileDevice::ExeOther));
     {
-        ScopedEnvironment fallbackPath("PATH", fallbackDirectory.toUtf8());
+#ifdef Q_OS_WIN
+        const QByteArray fallbackPath = fallbackDirectory.toUtf8() + ";" + qgetenv("PATH");
+#else
+        const QByteArray fallbackPath = fallbackDirectory.toUtf8();
+#endif
+        ScopedEnvironment fallbackPathEnvironment("PATH", fallbackPath);
         const OcrRequest fallback = TesseractOcrEngine::resolvedRequest(
             unresolved, directory.filePath(QStringLiteral("unpackaged/bin")));
         QCOMPARE(fallback.executable, QStringLiteral("tesseract"));
