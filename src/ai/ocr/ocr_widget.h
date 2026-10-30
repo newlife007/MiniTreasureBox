@@ -47,8 +47,6 @@ private:
     QTemporaryDir clipboardDirectory_;
     QLabel* preview_;
     QLabel* status_;
-    QLineEdit* executable_;
-    QLineEdit* tessdata_;
     QLineEdit* language_;
     QTextEdit* result_;
     QPushButton* recognizeButton_;

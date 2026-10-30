@@ -1,4 +1,5 @@
 #include <QCoreApplication>
+#include <QFile>
 #include <QFileInfo>
 #include <QTextStream>
 #include <QThread>
@@ -14,6 +15,13 @@ int main(int argc, char* argv[])
     }
     const QString imageName = QFileInfo(arguments.at(1)).baseName();
     const QString language = arguments.at(4);
+    const QString capturePath = qEnvironmentVariable("MINITREASUREBOX_FAKE_TESSERACT_ARGUMENTS");
+    if (!capturePath.isEmpty()) {
+        QFile capture(capturePath);
+        if (capture.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            capture.write(arguments.mid(1).join(QLatin1Char('\n')).toUtf8());
+        }
+    }
     if (language == QStringLiteral("missing")) {
         QTextStream(stderr) << "Error opening data file";
         return 1;

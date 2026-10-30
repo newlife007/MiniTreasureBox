@@ -58,8 +58,31 @@ jobs:
           version: '6.8.3'
           arch: win64_msvc2022_64
           cache: false
+      - name: Create integrity-locked OCR environment
+        id: ocr-runtime
+        uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2.0.7
+        with:
+          environment-file: packaging/ocr-runtime-win-64.lock
+          environment-name: ocr-runtime
+          micromamba-version: '2.0.5-0'
+          micromamba-root-path: '${{ runner.temp }}/micromamba'
+          cache-downloads: false
+          cache-environment: false
+          post-cleanup: all
+      - name: Stage and validate OCR runtime licenses
+        shell: pwsh
+        run: |
+          python scripts/stage_ocr_runtime.py `
+            --environment '${{ steps.ocr-runtime.outputs.environment-path }}' `
+            --output '${{ runner.temp }}/ocr-runtime-staged' `
+            --package-cache '${{ runner.temp }}/micromamba/pkgs' `
+            --platform windows
       - name: Configure
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+        run: >-
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DBUILD_TESTING=ON
+          -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
+          "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
@@ -92,11 +115,20 @@ jobs:
             throw "Application must not be installed at $rootApplicationPath."
           }
 
+          $runtimeRoot = Join-Path $installDirectory 'ocr-runtime'
+          $tesseractPath = Join-Path $runtimeRoot 'Library/bin/tesseract.exe'
+          $tessdataPath = Join-Path $runtimeRoot 'share/tessdata'
           $requiredRuntimeFiles = @(
             $applicationPath
             (Join-Path $binaryDirectory 'Qt6Core.dll')
             (Join-Path $binaryDirectory 'Qt6Gui.dll')
             (Join-Path $binaryDirectory 'Qt6Widgets.dll')
+            $tesseractPath
+            (Join-Path $tessdataPath 'eng.traineddata')
+            (Join-Path $tessdataPath 'chi_sim.traineddata')
+            (Join-Path $runtimeRoot 'licenses/THIRD_PARTY_MANIFEST.md')
+            (Join-Path $installDirectory 'licenses/THIRD_PARTY_NOTICES.md')
+            (Join-Path $installDirectory 'licenses/Apache-2.0.txt')
           )
           foreach ($runtimeFile in $requiredRuntimeFiles) {
             if (-not (Test-Path -PathType Leaf $runtimeFile)) {
@@ -133,6 +165,7 @@ jobs:
           )
           $application = $null
           $originalPath = $env:PATH
+          $originalTessdataPrefix = $env:TESSDATA_PREFIX
           try {
             $env:PATH = @(
               (Join-Path $env:SystemRoot 'System32')
@@ -140,6 +173,21 @@ jobs:
               (Join-Path $env:SystemRoot 'System32\Wbem')
               (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0')
             ) -join ';'
+            $env:TESSDATA_PREFIX = $null
+            $runtimeLibraries = @(Get-ChildItem (Join-Path $runtimeRoot 'Library/bin/*.dll'))
+            if ($runtimeLibraries.Count -eq 0) {
+              throw 'Bundled OCR runtime has no shared libraries.'
+            }
+            $languages = @(& $tesseractPath --tessdata-dir $tessdataPath --list-langs 2>&1 |
+              ForEach-Object { $_.ToString().Trim() })
+            if ($LASTEXITCODE -ne 0) {
+              throw "Bundled Tesseract exited with code $LASTEXITCODE`: $($languages -join [Environment]::NewLine)"
+            }
+            foreach ($language in @('eng', 'chi_sim')) {
+              if ($languages -notcontains $language) {
+                throw "Bundled Tesseract did not list required language $language."
+              }
+            }
             Start-Process -FilePath $shortcutPath
             for ($attempt = 0; $attempt -lt 20 -and $null -eq $application; $attempt++) {
               Start-Sleep -Milliseconds 250
@@ -153,6 +201,7 @@ jobs:
           }
           finally {
             $env:PATH = $originalPath
+            $env:TESSDATA_PREFIX = $originalTessdataPrefix
           }
           if ($null -eq $application) {
             throw "The Start Menu shortcut did not launch $resolvedApplicationPath."
@@ -228,8 +277,39 @@ jobs:
           version: '6.8.3'
           arch: clang_64
           cache: false
+      - name: Select host OCR runtime lock
+        id: ocr-platform
+        shell: bash
+        run: |
+          case "$(uname -m)" in
+            arm64) echo 'lock=packaging/ocr-runtime-osx-arm64.lock' >> "$GITHUB_OUTPUT" ;;
+            x86_64) echo 'lock=packaging/ocr-runtime-osx-64.lock' >> "$GITHUB_OUTPUT" ;;
+            *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
+          esac
+      - name: Create integrity-locked OCR environment
+        id: ocr-runtime
+        uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2.0.7
+        with:
+          environment-file: '${{ steps.ocr-platform.outputs.lock }}'
+          environment-name: ocr-runtime
+          micromamba-version: '2.0.5-0'
+          micromamba-root-path: '${{ runner.temp }}/micromamba'
+          cache-downloads: false
+          cache-environment: false
+          post-cleanup: all
+      - name: Stage and validate OCR runtime licenses
+        shell: bash
+        run: |
+          python3 scripts/stage_ocr_runtime.py \
+            --environment '${{ steps.ocr-runtime.outputs.environment-path }}' \
+            --output '${{ runner.temp }}/ocr-runtime-staged' \
+            --package-cache '${{ runner.temp }}/micromamba/pkgs' \
+            --platform macos
       - name: Configure
-        run: cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+        run: >-
+          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
+          "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
       - name: Build
         run: cmake --build build --parallel
       - name: Test
@@ -273,7 +353,39 @@ jobs:
             echo 'Installed application executable is missing.' >&2
             exit 1
           fi
-          "$executable" >"$RUNNER_TEMP/minitreasurebox-startup.log" 2>&1 &
+
+          runtime_root="$installed_application/Contents/Resources/ocr-runtime"
+          tesseract="$runtime_root/bin/tesseract"
+          tessdata="$runtime_root/share/tessdata"
+          required_ocr_files=(
+            "$tesseract"
+            "$tessdata/eng.traineddata"
+            "$tessdata/chi_sim.traineddata"
+            "$runtime_root/licenses/THIRD_PARTY_MANIFEST.md"
+            "$installed_application/Contents/Resources/licenses/THIRD_PARTY_NOTICES.md"
+            "$installed_application/Contents/Resources/licenses/Apache-2.0.txt"
+          )
+          for required_file in "${required_ocr_files[@]}"; do
+            if [[ ! -f "$required_file" ]]; then
+              echo "Required packaged OCR file is missing: $required_file" >&2
+              exit 1
+            fi
+          done
+          if ! find "$runtime_root/lib" -maxdepth 1 -name '*.dylib' -print -quit | grep -q .; then
+            echo 'Bundled OCR runtime has no shared libraries.' >&2
+            exit 1
+          fi
+          languages="$(env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
+            "$tesseract" --tessdata-dir "$tessdata" --list-langs)"
+          for language in eng chi_sim; do
+            if ! grep -qx "$language" <<<"$languages"; then
+              echo "Bundled Tesseract did not list required language $language." >&2
+              exit 1
+            fi
+          done
+
+          env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
+            "$executable" >"$RUNNER_TEMP/minitreasurebox-startup.log" 2>&1 &
           application_pid=$!
           sleep 5
           if ! kill -0 "$application_pid" 2>/dev/null; then
@@ -327,7 +439,7 @@ jobs:
           body: |
             These preview installers are not code-signed. Windows may show an unknown publisher warning, and macOS Gatekeeper may block the app. Do not treat these files as production-signed releases.
 
-            Both packages passed native install, startup, and removal smoke tests in this workflow run.
+            Both packages passed native install, startup, bundled OCR execution with a restricted PATH, language-data, and removal smoke tests in this workflow run.
           prerelease: true
           files: |
             installers/windows/*.exe

@@ -8,7 +8,7 @@
 
 - Qt 6 Widgets 桌面窗口，以及首页、分类、收藏、最近使用和设置导航；“实用工具”会汇总第一阶段的全部六个本地工具，并保留具体分类入口。
 - 基于统一 `ToolMetadata`/`ITool` 接口的六个离线实用工具：JSON 格式化与校验、Base64 编解码、URL 百分号编解码、Unix 时间戳转换、UUID 生成器和文本统计。
-- 图片 OCR 工具通过用户单独安装的本地 Tesseract 和语言模型识别文字，支持文件、拖放和剪贴板图片导入，以及编辑、复制和 TXT/Markdown 导出。
+- 图片 OCR 工具使用发布安装包内置的本地 Tesseract 5.5.3 和 `chi_sim+eng` 语言模型识别文字，支持文件、拖放和剪贴板图片导入，以及编辑、复制和 TXT/Markdown 导出。
 - 试卷复原小工具提供保守的本地图像检测、可编辑 Mask、原图对比和 PNG 导出。内置检测器不是训练模型。
 - 五个本地小游戏：猜数字、2048、贪吃蛇、俄罗斯方块和五子棋。
 - 按名称、分类、描述、关键词和别名进行全局搜索；使用 `Ctrl+K`（macOS 为 `Cmd+K`）聚焦搜索，使用 `Esc` 清除搜索或返回首页。
@@ -20,15 +20,13 @@
 
 ## 图片 OCR 本地运行要求
 
-图片 OCR 不随应用打包模型，也不会在运行时下载程序或语言数据。使用前需要单独安装 [Tesseract OCR](https://github.com/tesseract-ocr/tesseract)，并安装所需的 `.traineddata` 语言模型。默认语言为 `chi_sim+eng`，因此需要简体中文和英文模型。
+Windows 和 macOS 发布安装包内置 Apache-2.0 许可的 Tesseract 5.5.3 运行时，以及 `tessdata_fast` 的简体中文 `chi_sim` 和英文 `eng` 模型。安装后不需要另行下载、安装或配置 OCR 程序，应用运行时也不会下载程序或语言数据。安装包内的 OCR 组件缺失或损坏时，页面会提示修复或重新安装应用。
 
-可以在 OCR 页面配置以下内容：
+OCR 页面默认使用 `chi_sim+eng`。应用使用 `QProcess` 直接启动安装包内的程序，不经过命令行 shell。图片和识别文字不会上传到网络，也不会写入普通日志。剪贴板图片只会写入应用生命周期内的本地临时目录。输入图片不会被修改，只有用户主动选择导出路径时才会保存 TXT 或 Markdown 结果。
 
-- **Tesseract 程序**：填写 `tesseract`（程序已加入 `PATH` 时）或本地可执行文件的完整路径。也可以在首次启动前设置 `MINITREASUREBOX_TESSERACT` 环境变量。
-- **tessdata 目录**：填写包含 `.traineddata` 文件的本地目录。也可以使用 `TESSDATA_PREFIX` 环境变量。
-- **识别语言**：填写 Tesseract 语言代码，多个模型用 `+` 连接，例如 `chi_sim+eng`。
+源码树开发构建不会下载或自动准备 Tesseract。开发者和测试可以使用 `MINITREASUREBOX_TESSERACT` 指定可执行文件，并使用 `TESSDATA_PREFIX` 指定包含 `.traineddata` 文件的目录。未设置覆盖变量且构建目录旁没有打包运行时时，应用会回退到 `PATH` 中的 `tesseract`。发布安装包优先自动发现相对于应用可执行文件的内置运行时，显式环境变量仅用于开发和测试覆盖。
 
-应用使用 `QProcess` 直接启动配置的程序，不经过命令行 shell。图片和识别文字不会上传到网络，也不会写入普通日志。剪贴板图片只会写入应用生命周期内的本地临时目录。输入图片不会被修改，只有用户主动选择导出路径时才会保存 TXT 或 Markdown 结果。如果程序或语言模型缺失，页面会明确报告错误，不会将空结果显示为识别成功。
+Tesseract、语言模型和原生运行库的归属、版本、完整性锁定和许可证说明见 [第三方声明](THIRD_PARTY_NOTICES.md)。源代码依赖审计确认 Tesseract 是当前唯一由工具启动的外部程序；另一个 AI 工具“试卷复原小工具”使用进程内的确定性 C++ 图像基线，实用工具和小游戏也都在进程内运行，不需要外部程序或动态下载模型。
 
 ## 试卷复原小工具的能力和限制
 
@@ -91,27 +89,38 @@ LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysr
 
 安装包必须在对应的原生操作系统上构建，并确保 CMake 可以找到 Qt 6.8.3。
 
-Windows 使用 Visual Studio 2022 和 NSIS：
+Windows 使用 Visual Studio 2022 和 NSIS。先用完整性锁文件创建环境并收集许可证，再把经过验证的运行时路径传给 CMake：
 
 ```powershell
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON
+micromamba create --yes --prefix build/ocr-environment --file packaging/ocr-runtime-win-64.lock
+python scripts/stage_ocr_runtime.py --environment build/ocr-environment `
+  --output build/ocr-runtime-staged
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DBUILD_TESTING=ON `
+  -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON `
+  -DMINITREASUREBOX_OCR_RUNTIME_ROOT="$PWD/build/ocr-runtime-staged"
 cmake --build build --config Release --parallel
 ctest --test-dir build -C Release --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G NSIS
 ```
 
-生成的安装程序为 `build/packages/MiniTreasureBox-0.1.3-windows-x64-unsigned-preview.exe`，其中包含应用程序和运行所需的 Qt 库及插件。安装程序是自包含的，安装后无需修改 `PATH` 或其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
+生成的安装程序为 `build/packages/MiniTreasureBox-0.1.3-windows-x64-unsigned-preview.exe`，其中包含应用程序、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。安装后无需修改 `PATH`、安装 Tesseract 或配置其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
 
-macOS 使用 Qt 的 `clang_64` 工具链：
+macOS 使用 Qt 的 `clang_64` 工具链，并按构建主机架构选择 `ocr-runtime-osx-64.lock` 或 `ocr-runtime-osx-arm64.lock`：
 
 ```bash
-cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+OCR_LOCK=packaging/ocr-runtime-osx-64.lock  # Apple Silicon 使用 osx-arm64 文件
+micromamba create --yes --prefix build/ocr-environment --file "$OCR_LOCK"
+python3 scripts/stage_ocr_runtime.py --environment build/ocr-environment \
+  --output build/ocr-runtime-staged
+cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release \
+  -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON \
+  -DMINITREASUREBOX_OCR_RUNTIME_ROOT="$PWD/build/ocr-runtime-staged"
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G DragNDrop
 ```
 
-生成的磁盘映像为 `build/packages/MiniTreasureBox-0.1.3-macos-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app` 和运行所需的 Qt 库及插件。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
+生成的磁盘映像为 `build/packages/MiniTreasureBox-0.1.3-macos-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app`、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。复制应用后无需另行安装 OCR 依赖。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
 
 GitHub Actions 的 **Build release packages** 工作流也可以手动运行。手动运行会保留 Windows 和 macOS 安装包各 14 天，可从该次工作流的 Artifacts 区域下载，但不会创建 GitHub Release。发布新版本时，先确保 `CMakeLists.txt` 中的项目版本正确，再推送同版本的 `v` 前缀标签，例如：
 
