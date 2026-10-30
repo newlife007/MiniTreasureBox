@@ -96,17 +96,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
-        shell: pwsh
-        run: |
-          ctest --test-dir build -C Release --output-on-failure
-          if ($LASTEXITCODE -ne 0) {
-            Write-Host 'Running local_file_search directly for diagnostics.'
-            & 'build/Release/test_local_file_search.exe' 'serializesOverlappingWatcherRefreshes'
-            $debugLogPath = Join-Path $env:TEMP 'minitreasurebox-local-search-debug.log'
-            if (Test-Path $debugLogPath) { Get-Content -LiteralPath $debugLogPath }
-            else { Write-Host "Debug log not found at $debugLogPath" }
-            exit $LASTEXITCODE
-          }
+        run: ctest --test-dir build -C Release --output-on-failure
       - name: Create NSIS installer
         run: cpack --config build/CPackConfig.cmake -C Release -G NSIS
       - name: Smoke test install, startup, and removal

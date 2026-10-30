@@ -32,15 +32,6 @@ using namespace mtb;
 
 namespace {
 
-void debugLog(const QString& message)
-{
-    QFile file(QDir::temp().filePath(QStringLiteral("minitreasurebox-local-search-debug.log")));
-    if (file.open(QIODevice::Append | QIODevice::Text)) {
-        file.write(message.toUtf8());
-        file.write("\\n");
-    }
-}
-
 void writeFile(const QString& path, const QByteArray& contents)
 {
     QFile file(path);
@@ -306,7 +297,6 @@ void LocalFileSearchTest::watcherRefreshesWidgetAndReportsStatus()
 
 void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
 {
-    debugLog(QStringLiteral("start"));
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     QDir root(temporary.path());
@@ -318,7 +308,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     LocalFileSearchWidget widget;
     widget.setRootDirectory(temporary.path());
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
-    debugLog(QStringLiteral("ready"));
 
     QPromise<LocalFileSearchIndexResult> firstUpdate;
     QPromise<LocalFileSearchIndexResult> secondUpdate;
@@ -345,7 +334,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchA)));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
-    debugLog(QStringLiteral("first"));
     QCOMPARE(updatePaths.first(), QStringList{branchA});
 
     const QString secondPath = QDir(branchB).filePath(
@@ -365,7 +353,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
-    debugLog(QStringLiteral("second count=%1").arg(updatePaths.at(1).size()));
     QVERIFY(updatePaths.at(1).contains(branchB));
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
