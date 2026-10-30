@@ -101,7 +101,7 @@ jobs:
           ctest --test-dir build -C Release --output-on-failure
           if ($LASTEXITCODE -ne 0) {
             Write-Host 'Running local_file_search directly for diagnostics.'
-            & 'build/Release/test_local_file_search.exe'
+            & 'build/Release/test_local_file_search.exe' 'serializesOverlappingWatcherRefreshes' '-vs'
             $directExitCode = $LASTEXITCODE
             Write-Host "Direct local_file_search exit code: $directExitCode"
             exit $directExitCode
