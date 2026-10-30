@@ -70,6 +70,7 @@ private slots:
     void watcherRefreshesWidgetAndReportsStatus();
     void serializesOverlappingWatcherRefreshes();
     void reconcilesChangesBeforeBuildCompletion();
+    void reconcilesNewDirectoriesUntilWatchesAreStable();
     void rootAndQueryChangesSuppressStaleCompletions();
     void modeWordingAndValidatedOpenActionsUseLocalUrls();
 };
@@ -407,6 +408,70 @@ void LocalFileSearchTest::reconcilesChangesBeforeBuildCompletion()
     QVERIFY(list);
     QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 3000);
     QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), duringBuild);
+}
+
+void LocalFileSearchTest::reconcilesNewDirectoriesUntilWatchesAreStable()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QDir root(temporary.path());
+    const auto staleBuild = LocalFileSearch::buildIndex(temporary.path());
+    QVERIFY(staleBuild.success);
+
+    QPromise<LocalFileSearchIndexResult> delayedBuild;
+    delayedBuild.start();
+    LocalFileSearchWidget widget(
+        LocalFileSearchWidget::IndexBuilder{
+            [&delayedBuild](const QString&,
+                            const std::shared_ptr<std::atomic_bool>&) {
+                return delayedBuild.future();
+            }});
+
+    QList<QStringList> updatePaths;
+    bool lateWriteSucceeded = false;
+    const QString newDirectory = root.filePath(
+        QStringLiteral("new-during-reconciliation"));
+    const QString lateFile = QDir(newDirectory).filePath(
+        QStringLiteral("created-after-subtree-scan.txt"));
+    widget.setIndexUpdater(
+        [&updatePaths, &lateWriteSucceeded, &lateFile](
+            const LocalFileSearchIndex& current, const QStringList& paths,
+            const std::shared_ptr<std::atomic_bool>& cancelled) {
+            updatePaths.append(paths);
+            const LocalFileSearchIndexResult refreshed =
+                LocalFileSearch::refreshSubtree(current, paths.first(), cancelled);
+            if (updatePaths.size() == 1 && refreshed.success) {
+                QFile file(lateFile);
+                lateWriteSucceeded = file.open(QIODevice::WriteOnly)
+                    && file.write("late") == 4;
+            }
+
+            QPromise<LocalFileSearchIndexResult> completed;
+            const auto future = completed.future();
+            completed.start();
+            completed.addResult(refreshed);
+            completed.finish();
+            return future;
+        });
+
+    widget.setRootDirectory(temporary.path());
+    QVERIFY(root.mkpath(QStringLiteral("new-during-reconciliation")));
+    writeFile(QDir(newDirectory).filePath(QStringLiteral("already-scanned.txt")),
+              "initial");
+    delayedBuild.addResult(staleBuild);
+    delayedBuild.finish();
+
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
+    QVERIFY(lateWriteSucceeded);
+    QVERIFY(updatePaths.size() >= 2);
+    QCOMPARE(updatePaths.at(0), QStringList{temporary.path()});
+    QCOMPARE(updatePaths.at(1), QStringList{temporary.path()});
+
+    widget.setQuery(QStringLiteral("created-after-subtree-scan"));
+    auto* list = widget.findChild<QListWidget*>(QStringLiteral("localSearchResults"));
+    QVERIFY(list);
+    QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 3000);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), lateFile);
 }
 
 void LocalFileSearchTest::rootAndQueryChangesSuppressStaleCompletions()

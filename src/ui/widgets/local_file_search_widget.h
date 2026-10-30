@@ -59,7 +59,7 @@ private slots:
 
 private:
     void beginIndexBuild();
-    void configureWatcher();
+    [[nodiscard]] bool configureWatcher();
     void applyPendingUpdates();
     void scheduleSearch();
     void startSearch();

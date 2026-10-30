@@ -248,7 +248,7 @@ void LocalFileSearchWidget::beginIndexBuild()
                     return;
                 }
                 index_ = result.index;
-                configureWatcher();
+                (void) configureWatcher();
 
                 // Reconcile the snapshot after native watches are active. Changes
                 // received during reconciliation stay queued for the next update.
@@ -258,7 +258,7 @@ void LocalFileSearchWidget::beginIndexBuild()
     watcher->setFuture(indexBuilder_(rootPath_->text(), indexCancellation_));
 }
 
-void LocalFileSearchWidget::configureWatcher()
+bool LocalFileSearchWidget::configureWatcher()
 {
     QStringList desiredDirectories = index_.watchedDirectories;
     if (desiredDirectories.isEmpty() && !index_.rootPath.isEmpty()) {
@@ -295,6 +295,10 @@ void LocalFileSearchWidget::configureWatcher()
                                    registeredDirectories.cend());
     watchRegistrationComplete_ = failed.isEmpty()
         && std::all_of(desired.cbegin(), desired.cend(),
+                       [&registered](const QString& directory) {
+                           return registered.contains(directory);
+                       });
+    return std::any_of(missing.cbegin(), missing.cend(),
                        [&registered](const QString& directory) {
                            return registered.contains(directory);
                        });
@@ -366,7 +370,13 @@ void LocalFileSearchWidget::applyPendingUpdates()
                     return;
                 }
                 index_ = result.index;
-                configureWatcher();
+                const bool addedDirectoryWatches = configureWatcher();
+                if (addedDirectoryWatches) {
+                    // A directory first seen by this scan was not watched while
+                    // its subtree was traversed. Reconcile again now that its
+                    // native watch is active, repeating until the set is stable.
+                    pendingChangedPaths_.insert(index_.rootPath);
+                }
                 if (!pendingChangedPaths_.isEmpty()) {
                     applyPendingUpdates();
                     return;
