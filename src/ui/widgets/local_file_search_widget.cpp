@@ -372,7 +372,7 @@ void LocalFileSearchWidget::applyPendingUpdates()
 
     auto* watcher = new QFutureWatcher<LocalFileSearchIndexResult>(this);
     connect(watcher, &QFutureWatcher<LocalFileSearchIndexResult>::finished, this,
-            [this, watcher, generation] {
+            [this, watcher, generation, coalesced] {
                 const LocalFileSearchIndexResult result = watcher->result();
                 watcher->deleteLater();
                 if (generation != indexGeneration_) {
@@ -388,6 +388,23 @@ void LocalFileSearchWidget::applyPendingUpdates()
                     status_->setText(tr("文件索引更新失败，请使用“重建索引”重新扫描。"));
                     emit indexStateChanged();
                     return;
+                }
+                for (auto pending = pendingChangedPaths_.begin();
+                     pending != pendingChangedPaths_.end();) {
+                    const bool alreadyRefreshed = std::any_of(
+                        coalesced.cbegin(), coalesced.cend(), [&pending](const QString& activePath) {
+                            const QString relative = QDir::fromNativeSeparators(
+                                QDir(activePath).relativeFilePath(*pending));
+                            return relative == QStringLiteral(".")
+                                || (!QDir::isAbsolutePath(relative)
+                                    && relative != QStringLiteral("..")
+                                    && !relative.startsWith(QStringLiteral("../")));
+                        });
+                    if (alreadyRefreshed) {
+                        pending = pendingChangedPaths_.erase(pending);
+                    } else {
+                        ++pending;
+                    }
                 }
                 index_ = result.index;
                 const bool addedDirectoryWatches = configureWatcher();
