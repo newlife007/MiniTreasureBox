@@ -86,6 +86,7 @@ private:
     quint64 searchGeneration_{0};
     bool indexUpdateInProgress_{false};
     bool watchRegistrationComplete_{false};
+    QStringList activeUpdatePaths_;
     IndexBuilder indexBuilder_;
     IndexUpdater indexUpdater_;
     SearchStarter searchStarter_;
