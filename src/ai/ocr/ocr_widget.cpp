@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -10,7 +11,6 @@
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMimeData>
 #include <QPointer>
 #include <QPushButton>
@@ -41,7 +41,7 @@ OcrWidget::OcrWidget(QWidget* parent)
     : QWidget(parent)
     , preview_(new QLabel(this))
     , status_(new QLabel(tr("等待导入图片。"), this))
-    , language_(new QLineEdit(this))
+    , language_(new QComboBox(this))
     , result_(new QTextEdit(this))
     , recognizeButton_(makeButton(tr("开始识别"), QStringLiteral("ocrRecognizeButton"),
                                   tr("使用应用内置的离线 OCR 组件识别当前图片"), this))
@@ -57,13 +57,15 @@ OcrWidget::OcrWidget(QWidget* parent)
     setObjectName(QStringLiteral("ocrWidget"));
     setAcceptDrops(true);
 
-    QSettings settings;
-    language_->setText(settings.value(QStringLiteral("ai/ocr/language"),
-                                       QStringLiteral("chi_sim+eng")).toString());
-
     language_->setObjectName(QStringLiteral("ocrLanguage"));
-    language_->setPlaceholderText(QStringLiteral("chi_sim+eng"));
-    language_->setAccessibleName(tr("OCR 语言代码"));
+    language_->setAccessibleName(tr("OCR 识别语言"));
+    language_->addItem(tr("简体中文和英文"), QStringLiteral("chi_sim+eng"));
+    language_->addItem(tr("简体中文"), QStringLiteral("chi_sim"));
+    language_->addItem(tr("英文"), QStringLiteral("eng"));
+    const QString savedLanguage = QSettings().value(
+        QStringLiteral("ai/ocr/language"), QStringLiteral("chi_sim+eng")).toString();
+    const int savedLanguageIndex = language_->findData(savedLanguage);
+    language_->setCurrentIndex(savedLanguageIndex >= 0 ? savedLanguageIndex : 0);
 
     preview_->setObjectName(QStringLiteral("ocrPreview"));
     preview_->setAccessibleName(tr("待识别图片预览"));
@@ -137,8 +139,9 @@ OcrWidget::OcrWidget(QWidget* parent)
         copyButton_->setEnabled(canUseResult);
         exportButton_->setEnabled(canUseResult);
     });
-    connect(language_, &QLineEdit::editingFinished, this, [this] {
-        QSettings().setValue(QStringLiteral("ai/ocr/language"), language_->text().trimmed());
+    connect(language_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue(QStringLiteral("ai/ocr/language"),
+                             language_->currentData().toString());
     });
 }
 
@@ -384,7 +387,7 @@ void OcrWidget::showImportError(const QString& message)
 
 OcrRequest OcrWidget::request() const
 {
-    return {imagePath_, {}, {}, language_->text().trimmed(), 60000};
+    return {imagePath_, {}, {}, language_->currentData().toString(), 60000};
 }
 
 QWidget* createOcrWidget(QWidget* parent)

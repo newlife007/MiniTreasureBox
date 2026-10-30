@@ -58,11 +58,19 @@ jobs:
           version: '6.8.3'
           arch: win64_msvc2022_64
           cache: false
-      - name: Create integrity-locked OCR environment
+      - name: Download and SHA-256 verify OCR packages
+        shell: pwsh
+        run: |
+          python scripts/fetch_ocr_runtime.py `
+            --lock-file 'packaging/ocr-runtime-win-64.lock' `
+            --sha256-manifest 'packaging/ocr-runtime-sha256.json' `
+            --output-cache '${{ runner.temp }}/ocr-packages' `
+            --output-lock '${{ runner.temp }}/ocr-runtime-local.lock'
+      - name: Create verified OCR environment
         id: ocr-runtime
         uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2.0.7
         with:
-          environment-file: packaging/ocr-runtime-win-64.lock
+          environment-file: '${{ runner.temp }}/ocr-runtime-local.lock'
           environment-name: ocr-runtime
           micromamba-version: '2.0.5-0'
           micromamba-root-path: '${{ runner.temp }}/micromamba'
@@ -75,7 +83,9 @@ jobs:
           python scripts/stage_ocr_runtime.py `
             --environment '${{ steps.ocr-runtime.outputs.environment-path }}' `
             --output '${{ runner.temp }}/ocr-runtime-staged' `
-            --package-cache '${{ runner.temp }}/micromamba/pkgs' `
+            --package-cache '${{ runner.temp }}/ocr-packages' `
+            --lock-file 'packaging/ocr-runtime-win-64.lock' `
+            --sha256-manifest 'packaging/ocr-runtime-sha256.json' `
             --platform windows
       - name: Configure
         run: >-
@@ -136,6 +146,9 @@ jobs:
             }
           }
 
+          $smokeHelperPath = Join-Path $binaryDirectory 'ocr_runtime_smoke.exe'
+          Copy-Item -LiteralPath 'build/Release/ocr_runtime_smoke.exe' -Destination $smokeHelperPath
+
           $resolvedApplicationPath = (Resolve-Path -LiteralPath $applicationPath).Path
           $programDirectories = @(
             [Environment]::GetFolderPath([Environment+SpecialFolder]::Programs)
@@ -188,6 +201,10 @@ jobs:
                 throw "Bundled Tesseract did not list required language $language."
               }
             }
+            & $smokeHelperPath $binaryDirectory
+            if ($LASTEXITCODE -ne 0) {
+              throw "Production OCR resolver smoke test exited with code $LASTEXITCODE."
+            }
             Start-Process -FilePath $shortcutPath
             for ($attempt = 0; $attempt -lt 20 -and $null -eq $application; $attempt++) {
               Start-Sleep -Milliseconds 250
@@ -202,6 +219,7 @@ jobs:
           finally {
             $env:PATH = $originalPath
             $env:TESSDATA_PREFIX = $originalTessdataPrefix
+            Remove-Item -LiteralPath $smokeHelperPath -Force -ErrorAction SilentlyContinue
           }
           if ($null -eq $application) {
             throw "The Start Menu shortcut did not launch $resolvedApplicationPath."
@@ -263,9 +281,21 @@ jobs:
           retention-days: 14
 
   package-macos:
-    name: Package macOS disk image
+    name: Package macOS disk image (${{ matrix.architecture }})
     needs: validate-release-version
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            runner: macos-15-intel
+            lock: packaging/ocr-runtime-osx-64.lock
+            package_suffix: x64
+          - architecture: arm64
+            runner: macos-14
+            lock: packaging/ocr-runtime-osx-arm64.lock
+            package_suffix: arm64
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
     steps:
@@ -277,20 +307,26 @@ jobs:
           version: '6.8.3'
           arch: clang_64
           cache: false
-      - name: Select host OCR runtime lock
-        id: ocr-platform
+      - name: Require the selected native architecture
         shell: bash
         run: |
-          case "$(uname -m)" in
-            arm64) echo 'lock=packaging/ocr-runtime-osx-arm64.lock' >> "$GITHUB_OUTPUT" ;;
-            x86_64) echo 'lock=packaging/ocr-runtime-osx-64.lock' >> "$GITHUB_OUTPUT" ;;
-            *) echo "Unsupported macOS architecture: $(uname -m)" >&2; exit 1 ;;
-          esac
-      - name: Create integrity-locked OCR environment
+          if [[ "$(uname -m)" != '${{ matrix.architecture }}' ]]; then
+            echo "Expected ${{ matrix.architecture }} runner, received $(uname -m)." >&2
+            exit 1
+          fi
+      - name: Download and SHA-256 verify OCR packages
+        shell: bash
+        run: |
+          python3 scripts/fetch_ocr_runtime.py \
+            --lock-file '${{ matrix.lock }}' \
+            --sha256-manifest 'packaging/ocr-runtime-sha256.json' \
+            --output-cache '${{ runner.temp }}/ocr-packages' \
+            --output-lock '${{ runner.temp }}/ocr-runtime-local.lock'
+      - name: Create verified OCR environment
         id: ocr-runtime
         uses: mamba-org/setup-micromamba@add3a49764cedee8ee24e82dfde87f5bc2914462 # v2.0.7
         with:
-          environment-file: '${{ steps.ocr-platform.outputs.lock }}'
+          environment-file: '${{ runner.temp }}/ocr-runtime-local.lock'
           environment-name: ocr-runtime
           micromamba-version: '2.0.5-0'
           micromamba-root-path: '${{ runner.temp }}/micromamba'
@@ -303,11 +339,15 @@ jobs:
           python3 scripts/stage_ocr_runtime.py \
             --environment '${{ steps.ocr-runtime.outputs.environment-path }}' \
             --output '${{ runner.temp }}/ocr-runtime-staged' \
-            --package-cache '${{ runner.temp }}/micromamba/pkgs' \
+            --package-cache '${{ runner.temp }}/ocr-packages' \
+            --lock-file '${{ matrix.lock }}' \
+            --sha256-manifest 'packaging/ocr-runtime-sha256.json' \
             --platform macos
       - name: Configure
         run: >-
           cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}"
+          "-DMINITREASUREBOX_PACKAGE_ARCH_SUFFIX=${{ matrix.package_suffix }}"
           -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
           "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
       - name: Build
@@ -383,6 +423,8 @@ jobs:
               exit 1
             fi
           done
+          env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
+            build/ocr_runtime_smoke "$installed_application/Contents/MacOS"
 
           env -u TESSDATA_PREFIX PATH=/usr/bin:/bin \
             "$executable" >"$RUNNER_TEMP/minitreasurebox-startup.log" 2>&1 &
@@ -407,7 +449,7 @@ jobs:
       - name: Upload unsigned macOS preview
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: MiniTreasureBox-macos-unsigned-preview
+          name: MiniTreasureBox-macos-${{ matrix.package_suffix }}-unsigned-preview
           path: build/packages/*.dmg
           if-no-files-found: error
           retention-days: 14
@@ -427,11 +469,12 @@ jobs:
         with:
           name: MiniTreasureBox-windows-unsigned-preview
           path: installers/windows
-      - name: Download unsigned macOS preview
+      - name: Download unsigned macOS previews
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: MiniTreasureBox-macos-unsigned-preview
+          pattern: MiniTreasureBox-macos-*-unsigned-preview
           path: installers/macos
+          merge-multiple: true
       - name: Publish unsigned preview installers
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
@@ -439,7 +482,7 @@ jobs:
           body: |
             These preview installers are not code-signed. Windows may show an unknown publisher warning, and macOS Gatekeeper may block the app. Do not treat these files as production-signed releases.
 
-            Both packages passed native install, startup, bundled OCR execution with a restricted PATH, language-data, and removal smoke tests in this workflow run.
+            Both architecture-specific macOS packages and the Windows package passed native install, startup, bundled OCR recognition through the production resolver with a restricted system PATH for the runtime, language-data, and removal smoke tests in this workflow run.
           prerelease: true
           files: |
             installers/windows/*.exe

@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -109,7 +110,7 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     ScopedEnvironment dataOverride("TESSDATA_PREFIX", QByteArray());
     OcrWidget widget;
     widget.show();
-    auto* language = widget.findChild<QLineEdit*>(QStringLiteral("ocrLanguage"));
+    auto* language = widget.findChild<QComboBox*>(QStringLiteral("ocrLanguage"));
     auto* preview = widget.findChild<QLabel*>(QStringLiteral("ocrPreview"));
     auto* status = widget.findChild<QLabel*>(QStringLiteral("ocrStatus"));
     auto* result = widget.findChild<QTextEdit*>(QStringLiteral("ocrResult"));
@@ -126,7 +127,14 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(exportButton);
     QVERIFY(cancel);
 
-    language->setText(QStringLiteral("eng"));
+    QCOMPARE(language->count(), 3);
+    QVERIFY(!language->isEditable());
+    QCOMPARE(language->itemData(0).toString(), QStringLiteral("chi_sim+eng"));
+    QCOMPARE(language->itemData(1).toString(), QStringLiteral("chi_sim"));
+    QCOMPARE(language->itemData(2).toString(), QStringLiteral("eng"));
+    language->setCurrentIndex(language->findData(QStringLiteral("eng")));
+    language->setCurrentText(QStringLiteral("deu"));
+    QCOMPARE(language->currentData().toString(), QStringLiteral("eng"));
     QVERIFY(widget.importImage(imagePath));
     QVERIFY(!preview->pixmap().isNull());
     widget.startRecognition();
@@ -155,10 +163,12 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(!exportButton->isEnabled());
     QVERIFY(!widget.exportText(directory.filePath(QStringLiteral("stale.txt")), &error));
 
-    language->setText(QStringLiteral("fail"));
-    widget.startRecognition();
-    QVERIFY(result->toPlainText().isEmpty());
-    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("失败")), 3000);
+    {
+        ScopedEnvironment failureMode("MINITREASUREBOX_FAKE_TESSERACT_MODE", "fail");
+        widget.startRecognition();
+        QVERIFY(result->toPlainText().isEmpty());
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("失败")), 3000);
+    }
     QVERIFY(result->toPlainText().isEmpty());
     QVERIFY(!copy->isEnabled());
     QVERIFY(!exportButton->isEnabled());

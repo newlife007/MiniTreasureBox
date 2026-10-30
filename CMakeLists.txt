@@ -80,6 +80,16 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    add_test(NAME ocr_runtime_fetch
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/unit/test_fetch_ocr_runtime.py"
+                "${CMAKE_SOURCE_DIR}/scripts/fetch_ocr_runtime.py")
+    add_test(NAME ocr_runtime_staging
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/unit/test_stage_ocr_runtime.py"
+                "${CMAKE_SOURCE_DIR}/scripts/stage_ocr_runtime.py")
 
     add_executable(test_tool_registry tests/unit/test_tool_registry.cpp)
     target_link_libraries(test_tool_registry PRIVATE minitreasurebox_foundation Qt6::Test)
@@ -111,6 +121,9 @@ if(BUILD_TESTING)
 
     add_executable(fake_tesseract tests/fixtures/fake_tesseract.cpp)
     target_link_libraries(fake_tesseract PRIVATE Qt6::Core)
+
+    add_executable(ocr_runtime_smoke tests/fixtures/ocr_runtime_smoke.cpp)
+    target_link_libraries(ocr_runtime_smoke PRIVATE minitreasurebox_foundation)
 
     add_executable(test_ocr_engine tests/unit/test_ocr_engine.cpp)
     target_link_libraries(test_ocr_engine PRIVATE minitreasurebox_foundation Qt6::Test)
@@ -238,6 +251,12 @@ if(WIN32 OR APPLE)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MiniTreasureBox desktop utilities")
     set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
     set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+    set(MINITREASUREBOX_PACKAGE_ARCH_SUFFIX "" CACHE STRING
+        "Optional architecture suffix for native package file names")
+    set(_mtb_package_arch_suffix "")
+    if(MINITREASUREBOX_PACKAGE_ARCH_SUFFIX)
+        set(_mtb_package_arch_suffix "-${MINITREASUREBOX_PACKAGE_ARCH_SUFFIX}")
+    endif()
 
     if(WIN32)
         set(CPACK_GENERATOR "NSIS")
@@ -248,7 +267,7 @@ if(WIN32 OR APPLE)
         set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     else()
         set(CPACK_GENERATOR "DragNDrop")
-        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-macos-unsigned-preview")
+        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-macos${_mtb_package_arch_suffix}-unsigned-preview")
         set(CPACK_DMG_VOLUME_NAME "${PROJECT_NAME} ${PROJECT_VERSION}")
     endif()
 
