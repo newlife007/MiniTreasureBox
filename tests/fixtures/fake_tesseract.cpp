@@ -1,47 +1,62 @@
-#include <QCoreApplication>
-#include <QFile>
-#include <QFileInfo>
-#include <QTextStream>
-#include <QThread>
+#include <chrono>
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iostream>
+#include <string>
+#include <thread>
+
+namespace {
+
+std::string environmentValue(const char* name)
+{
+    const char* value = std::getenv(name);
+    return value ? value : "";
+}
+
+}  // namespace
 
 int main(int argc, char* argv[])
 {
-    QCoreApplication application(argc, argv);
-    const QStringList arguments = application.arguments();
-    if (arguments.size() < 5 || arguments.at(2) != QStringLiteral("stdout")
-        || arguments.at(3) != QStringLiteral("-l")) {
-        QTextStream(stderr) << "invalid arguments";
+    if (argc < 5 || std::string(argv[2]) != "stdout" || std::string(argv[3]) != "-l") {
+        std::cerr << "invalid arguments";
         return 4;
     }
-    const QString imageName = QFileInfo(arguments.at(1)).baseName();
-    const QString language = arguments.at(4);
-    QString behavior = qEnvironmentVariable("MINITREASUREBOX_FAKE_TESSERACT_MODE");
-    if (behavior.isEmpty()) {
+
+    const std::string imageName = std::filesystem::path(argv[1]).stem().string();
+    const std::string language = argv[4];
+    std::string behavior = environmentValue("MINITREASUREBOX_FAKE_TESSERACT_MODE");
+    if (behavior.empty()) {
         behavior = language;
     }
-    const QString capturePath = qEnvironmentVariable("MINITREASUREBOX_FAKE_TESSERACT_ARGUMENTS");
-    if (!capturePath.isEmpty()) {
-        QFile capture(capturePath);
-        if (capture.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            capture.write(arguments.mid(1).join(QLatin1Char('\n')).toUtf8());
+    const std::string capturePath = environmentValue("MINITREASUREBOX_FAKE_TESSERACT_ARGUMENTS");
+    if (!capturePath.empty()) {
+        std::ofstream capture(capturePath, std::ios::trunc);
+        if (capture) {
+            for (int index = 1; index < argc; ++index) {
+                if (index > 1) {
+                    capture << '\n';
+                }
+                capture << argv[index];
+            }
         }
     }
-    if (behavior == QStringLiteral("missing")) {
-        QTextStream(stderr) << "Error opening data file";
+    if (behavior == "missing") {
+        std::cerr << "Error opening data file";
         return 1;
     }
-    if (behavior == QStringLiteral("fail")) {
-        QTextStream(stderr) << "fixture failure";
+    if (behavior == "fail") {
+        std::cerr << "fixture failure";
         return 2;
     }
-    if (behavior == QStringLiteral("slow")) {
-        QThread::msleep(1000);
-        QTextStream(stdout) << "too late";
+    if (behavior == "slow") {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        std::cout << "too late";
         return 0;
     }
-    if (behavior == QStringLiteral("empty")) {
+    if (behavior == "empty") {
         return 0;
     }
-    QTextStream(stdout) << "fixture text for " << imageName;
+    std::cout << "fixture text for " << imageName;
     return 0;
 }
