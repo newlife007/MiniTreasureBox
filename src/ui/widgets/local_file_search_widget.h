@@ -35,6 +35,8 @@ public:
     using UrlLauncher = std::function<bool(const QUrl&)>;
 
     explicit LocalFileSearchWidget(QWidget* parent = nullptr);
+    explicit LocalFileSearchWidget(IndexBuilder indexBuilder,
+                                   QWidget* parent = nullptr);
     ~LocalFileSearchWidget() override;
 
     void setQuery(const QString& query);
@@ -52,10 +54,12 @@ signals:
     void resultsChanged();
     void indexStateChanged();
 
+private slots:
+    void queueChangedPath(const QString& path);
+
 private:
     void beginIndexBuild();
     void configureWatcher();
-    void queueChangedPath(const QString& path);
     void applyPendingUpdates();
     void scheduleSearch();
     void startSearch();
@@ -80,6 +84,7 @@ private:
     std::shared_ptr<std::atomic_bool> searchCancellation_;
     quint64 indexGeneration_{0};
     quint64 searchGeneration_{0};
+    bool indexUpdateInProgress_{false};
     bool watchRegistrationComplete_{false};
     IndexBuilder indexBuilder_;
     IndexUpdater indexUpdater_;

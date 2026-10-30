@@ -62,14 +62,47 @@ class LocalFileSearchTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void constructionDoesNotIndexBeforeSelection();
     void buildsUnicodeMetadataIndexAndBoundsResults();
     void rejectsInvalidRootsSymlinksAndCancellation();
     void searchesPrebuiltSnapshotWithoutReadingDisk();
     void incrementallyRefreshesCreatedDeletedAndRenamedSubtrees();
     void watcherRefreshesWidgetAndReportsStatus();
+    void serializesOverlappingWatcherRefreshes();
+    void reconcilesChangesBeforeBuildCompletion();
     void rootAndQueryChangesSuppressStaleCompletions();
     void modeWordingAndValidatedOpenActionsUseLocalUrls();
 };
+
+void LocalFileSearchTest::constructionDoesNotIndexBeforeSelection()
+{
+    QPromise<LocalFileSearchIndexResult> unexpectedBuild;
+    unexpectedBuild.start();
+    int buildRequests = 0;
+    LocalFileSearchWidget widget(
+        LocalFileSearchWidget::IndexBuilder{
+            [&unexpectedBuild, &buildRequests](
+                const QString&, const std::shared_ptr<std::atomic_bool>&) {
+                ++buildRequests;
+                return unexpectedBuild.future();
+            }});
+
+    auto* rootPath = widget.findChild<QLineEdit*>(QStringLiteral("localSearchRoot"));
+    auto* status = widget.findChild<QLabel*>(QStringLiteral("localSearchStatus"));
+    auto* rebuild = widget.findChild<QPushButton*>(
+        QStringLiteral("rebuildSearchIndex"));
+    QVERIFY(rootPath);
+    QVERIFY(status);
+    QVERIFY(rebuild);
+    QTest::qWait(300);
+    unexpectedBuild.finish();
+
+    QCOMPARE(buildRequests, 0);
+    QVERIFY(rootPath->text().isEmpty());
+    QVERIFY(!widget.isIndexReady());
+    QVERIFY(!rebuild->isEnabled());
+    QVERIFY(status->text().contains(QStringLiteral("请选择")));
+}
 
 void LocalFileSearchTest::buildsUnicodeMetadataIndexAndBoundsResults()
 {
@@ -261,6 +294,121 @@ void LocalFileSearchTest::watcherRefreshesWidgetAndReportsStatus()
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
 }
 
+void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QDir root(temporary.path());
+    QVERIFY(root.mkpath(QStringLiteral("branch-a")));
+    QVERIFY(root.mkpath(QStringLiteral("branch-b")));
+    const QString branchA = root.filePath(QStringLiteral("branch-a"));
+    const QString branchB = root.filePath(QStringLiteral("branch-b"));
+
+    LocalFileSearchWidget widget;
+    widget.setRootDirectory(temporary.path());
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
+
+    QPromise<LocalFileSearchIndexResult> firstUpdate;
+    QPromise<LocalFileSearchIndexResult> secondUpdate;
+    firstUpdate.start();
+    secondUpdate.start();
+    QList<LocalFileSearchIndex> updateBases;
+    QList<QStringList> updatePaths;
+    QList<std::shared_ptr<std::atomic_bool>> cancellations;
+    widget.setIndexUpdater(
+        [&firstUpdate, &secondUpdate, &updateBases, &updatePaths, &cancellations](
+            const LocalFileSearchIndex& current, const QStringList& paths,
+            const std::shared_ptr<std::atomic_bool>& cancelled) {
+            updateBases.append(current);
+            updatePaths.append(paths);
+            cancellations.append(cancelled);
+            return updateBases.size() == 1 ? firstUpdate.future()
+                                           : secondUpdate.future();
+        });
+
+    const QString firstPath = QDir(branchA).filePath(
+        QStringLiteral("first-added.txt"));
+    writeFile(firstPath, "first");
+    QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
+                                      Qt::DirectConnection,
+                                      Q_ARG(QString, branchA)));
+    QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
+    QCOMPARE(updatePaths.first(), QStringList{branchA});
+
+    const QString secondPath = QDir(branchB).filePath(
+        QStringLiteral("second-added.txt"));
+    writeFile(secondPath, "second");
+    QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
+                                      Qt::DirectConnection,
+                                      Q_ARG(QString, branchB)));
+    QTest::qWait(350);
+    QCOMPARE(updateBases.size(), 1);
+    QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
+
+    auto firstResult = LocalFileSearch::refreshSubtree(
+        updateBases.first(), updatePaths.first().first());
+    QVERIFY(firstResult.success);
+    firstUpdate.addResult(firstResult);
+    firstUpdate.finish();
+
+    QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
+    QCOMPARE(updatePaths.at(1), QStringList{branchB});
+    QCOMPARE(LocalFileSearch::search(updateBases.at(1),
+                                     QStringLiteral("first-added")).size(),
+             1);
+    QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
+
+    auto secondResult = LocalFileSearch::refreshSubtree(
+        updateBases.at(1), updatePaths.at(1).first());
+    QVERIFY(secondResult.success);
+    secondUpdate.addResult(secondResult);
+    secondUpdate.finish();
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 3000);
+
+    widget.setQuery(QStringLiteral("added"));
+    auto* list = widget.findChild<QListWidget*>(QStringLiteral("localSearchResults"));
+    QVERIFY(list);
+    QTRY_COMPARE_WITH_TIMEOUT(list->count(), 2, 3000);
+    QVERIFY(itemForPath(list, firstPath));
+    QVERIFY(itemForPath(list, secondPath));
+}
+
+void LocalFileSearchTest::reconcilesChangesBeforeBuildCompletion()
+{
+    QTemporaryDir temporary;
+    QVERIFY(temporary.isValid());
+    QDir root(temporary.path());
+    writeFile(root.filePath(QStringLiteral("before-build.txt")), "before");
+    const auto scannedBeforeMutation = LocalFileSearch::buildIndex(temporary.path());
+    QVERIFY(scannedBeforeMutation.success);
+
+    QPromise<LocalFileSearchIndexResult> delayedBuild;
+    delayedBuild.start();
+    int buildRequests = 0;
+    LocalFileSearchWidget widget(
+        LocalFileSearchWidget::IndexBuilder{
+            [&delayedBuild, &buildRequests](
+                const QString&, const std::shared_ptr<std::atomic_bool>&) {
+                ++buildRequests;
+                return delayedBuild.future();
+            }});
+    widget.setRootDirectory(temporary.path());
+    QCOMPARE(buildRequests, 1);
+
+    const QString duringBuild = root.filePath(
+        QStringLiteral("created-during-build.txt"));
+    writeFile(duringBuild, "during");
+    delayedBuild.addResult(scannedBeforeMutation);
+    delayedBuild.finish();
+
+    QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
+    widget.setQuery(QStringLiteral("created-during-build"));
+    auto* list = widget.findChild<QListWidget*>(QStringLiteral("localSearchResults"));
+    QVERIFY(list);
+    QTRY_COMPARE_WITH_TIMEOUT(list->count(), 1, 3000);
+    QCOMPARE(list->item(0)->data(Qt::UserRole).toString(), duringBuild);
+}
+
 void LocalFileSearchTest::rootAndQueryChangesSuppressStaleCompletions()
 {
     QTemporaryDir temporary;
@@ -362,6 +510,11 @@ void LocalFileSearchTest::modeWordingAndValidatedOpenActionsUseLocalUrls()
     QVERIFY(mode);
     QVERIFY(query);
     QVERIFY(local);
+    auto* localRoot = local->findChild<QLineEdit*>(
+        QStringLiteral("localSearchRoot"));
+    QVERIFY(localRoot);
+    QVERIFY(localRoot->text().isEmpty());
+    QVERIFY(!local->isIndexReady());
     local->setRootDirectory(temporary.path());
     mode->setCurrentIndex(mode->findData(QStringLiteral("files")));
     QVERIFY(query->placeholderText().contains(QStringLiteral("文件名")));

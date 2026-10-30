@@ -11,7 +11,6 @@
 #include <QLineEdit>
 #include <QListWidget>
 #include <QPushButton>
-#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QtConcurrentRun>
@@ -22,6 +21,12 @@
 namespace mtb {
 
 LocalFileSearchWidget::LocalFileSearchWidget(QWidget* parent)
+    : LocalFileSearchWidget({}, parent)
+{
+}
+
+LocalFileSearchWidget::LocalFileSearchWidget(IndexBuilder indexBuilder,
+                                             QWidget* parent)
     : QWidget(parent)
     , rootPath_(new QLineEdit(this))
     , rebuildButton_(new QPushButton(tr("重建索引"), this))
@@ -30,11 +35,13 @@ LocalFileSearchWidget::LocalFileSearchWidget(QWidget* parent)
     , debounceTimer_(new QTimer(this))
     , updateTimer_(new QTimer(this))
     , fileWatcher_(new QFileSystemWatcher(this))
-    , indexBuilder_([](const QString& root,
-                       const std::shared_ptr<std::atomic_bool>& cancelled) {
-        return QtConcurrent::run(
-            [root, cancelled] { return LocalFileSearch::buildIndex(root, cancelled); });
-    })
+    , indexBuilder_(indexBuilder ? std::move(indexBuilder) : IndexBuilder{
+          [](const QString& root,
+             const std::shared_ptr<std::atomic_bool>& cancelled) {
+              return QtConcurrent::run([root, cancelled] {
+                  return LocalFileSearch::buildIndex(root, cancelled);
+              });
+          }})
     , indexUpdater_([](const LocalFileSearchIndex& current, const QStringList& paths,
                        const std::shared_ptr<std::atomic_bool>& cancelled) {
         return QtConcurrent::run([current, paths, cancelled] {
@@ -112,11 +119,8 @@ LocalFileSearchWidget::LocalFileSearchWidget(QWidget* parent)
                 queueChangedPath(QFileInfo(path).absolutePath());
             });
 
-    QString initialRoot = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
-    if (initialRoot.isEmpty()) {
-        initialRoot = QDir::homePath();
-    }
-    setRootDirectory(initialRoot);
+    rebuildButton_->setEnabled(false);
+    status_->setText(tr("请选择本地目录以建立文件名和路径索引。"));
 }
 
 LocalFileSearchWidget::~LocalFileSearchWidget()
@@ -151,6 +155,7 @@ void LocalFileSearchWidget::setRootDirectory(const QString& path)
         return;
     }
     rootPath_->setText(normalized);
+    rebuildButton_->setEnabled(true);
     beginIndexBuild();
 }
 
@@ -188,7 +193,7 @@ QList<LocalFileSearchResult> LocalFileSearchWidget::results() const
 
 bool LocalFileSearchWidget::isIndexReady() const
 {
-    return index_.ready;
+    return index_.ready && !indexUpdateInProgress_;
 }
 
 LocalFileSearchIndexStats LocalFileSearchWidget::indexStats() const
@@ -208,6 +213,7 @@ void LocalFileSearchWidget::beginIndexBuild()
     }
     debounceTimer_->stop();
     updateTimer_->stop();
+    indexUpdateInProgress_ = false;
     pendingChangedPaths_.clear();
     if (!fileWatcher_->directories().isEmpty()) {
         fileWatcher_->removePaths(fileWatcher_->directories());
@@ -243,28 +249,55 @@ void LocalFileSearchWidget::beginIndexBuild()
                 }
                 index_ = result.index;
                 configureWatcher();
-                emit indexStateChanged();
-                scheduleSearch();
+
+                // Reconcile the snapshot after native watches are active. Changes
+                // received during reconciliation stay queued for the next update.
+                pendingChangedPaths_.insert(index_.rootPath);
+                applyPendingUpdates();
             });
     watcher->setFuture(indexBuilder_(rootPath_->text(), indexCancellation_));
 }
 
 void LocalFileSearchWidget::configureWatcher()
 {
-    const QStringList oldDirectories = fileWatcher_->directories();
-    if (!oldDirectories.isEmpty()) {
-        fileWatcher_->removePaths(oldDirectories);
-    }
-    const QStringList oldFiles = fileWatcher_->files();
-    if (!oldFiles.isEmpty()) {
-        fileWatcher_->removePaths(oldFiles);
+    QStringList desiredDirectories = index_.watchedDirectories;
+    if (desiredDirectories.isEmpty() && !index_.rootPath.isEmpty()) {
+        desiredDirectories.append(index_.rootPath);
     }
 
-    const QStringList failed = index_.watchedDirectories.isEmpty()
-        ? QStringList{index_.rootPath}
-        : fileWatcher_->addPaths(index_.watchedDirectories);
+    const QSet<QString> desired(desiredDirectories.cbegin(),
+                                desiredDirectories.cend());
+    QStringList obsolete;
+    for (const QString& directory : fileWatcher_->directories()) {
+        if (!desired.contains(directory)) {
+            obsolete.append(directory);
+        }
+    }
+    if (!obsolete.isEmpty()) {
+        fileWatcher_->removePaths(obsolete);
+    }
+
+    const QStringList currentlyRegistered = fileWatcher_->directories();
+    const QSet<QString> registeredBefore(currentlyRegistered.cbegin(),
+                                         currentlyRegistered.cend());
+    QStringList missing;
+    for (const QString& directory : desiredDirectories) {
+        if (!registeredBefore.contains(directory)) {
+            missing.append(directory);
+        }
+    }
+    const QStringList failed = missing.isEmpty()
+        ? QStringList{}
+        : fileWatcher_->addPaths(missing);
+
+    const QStringList registeredDirectories = fileWatcher_->directories();
+    const QSet<QString> registered(registeredDirectories.cbegin(),
+                                   registeredDirectories.cend());
     watchRegistrationComplete_ = failed.isEmpty()
-        && fileWatcher_->directories().size() == index_.watchedDirectories.size();
+        && std::all_of(desired.cbegin(), desired.cend(),
+                       [&registered](const QString& directory) {
+                           return registered.contains(directory);
+                       });
 }
 
 void LocalFileSearchWidget::queueChangedPath(const QString& path)
@@ -278,7 +311,8 @@ void LocalFileSearchWidget::queueChangedPath(const QString& path)
 
 void LocalFileSearchWidget::applyPendingUpdates()
 {
-    if (!index_.ready || pendingChangedPaths_.isEmpty()) {
+    if (indexUpdateInProgress_ || !index_.ready
+        || pendingChangedPaths_.isEmpty()) {
         return;
     }
 
@@ -305,14 +339,12 @@ void LocalFileSearchWidget::applyPendingUpdates()
 
     const quint64 generation = ++indexGeneration_;
     ++searchGeneration_;
-    if (indexCancellation_) {
-        indexCancellation_->store(true, std::memory_order_relaxed);
-    }
     if (searchCancellation_) {
         searchCancellation_->store(true, std::memory_order_relaxed);
     }
     debounceTimer_->stop();
     status_->setText(tr("正在后台更新文件索引…"));
+    indexUpdateInProgress_ = true;
     indexCancellation_ = std::make_shared<std::atomic_bool>(false);
 
     auto* watcher = new QFutureWatcher<LocalFileSearchIndexResult>(this);
@@ -324,7 +356,10 @@ void LocalFileSearchWidget::applyPendingUpdates()
                     return;
                 }
                 indexCancellation_.reset();
+                indexUpdateInProgress_ = false;
                 if (!result.success) {
+                    index_.ready = false;
+                    pendingChangedPaths_.clear();
                     watchRegistrationComplete_ = false;
                     status_->setText(tr("文件索引更新失败，请使用“重建索引”重新扫描。"));
                     emit indexStateChanged();
@@ -332,11 +367,12 @@ void LocalFileSearchWidget::applyPendingUpdates()
                 }
                 index_ = result.index;
                 configureWatcher();
+                if (!pendingChangedPaths_.isEmpty()) {
+                    applyPendingUpdates();
+                    return;
+                }
                 emit indexStateChanged();
                 scheduleSearch();
-                if (!pendingChangedPaths_.isEmpty()) {
-                    updateTimer_->start();
-                }
             });
     watcher->setFuture(indexUpdater_(index_, coalesced, indexCancellation_));
 }
