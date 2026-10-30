@@ -297,6 +297,7 @@ void LocalFileSearchTest::watcherRefreshesWidgetAndReportsStatus()
 
 void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
 {
+    qInfo() << "serializesOverlappingWatcherRefreshes: start";
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     QDir root(temporary.path());
@@ -308,6 +309,7 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     LocalFileSearchWidget widget;
     widget.setRootDirectory(temporary.path());
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
+    qInfo() << "serializes: initial index ready";
 
     QPromise<LocalFileSearchIndexResult> firstUpdate;
     QPromise<LocalFileSearchIndexResult> secondUpdate;
@@ -334,6 +336,7 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchA)));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
+    qInfo() << "serializes: first update started" << updatePaths;
     QCOMPARE(updatePaths.first(), QStringList{branchA});
 
     const QString secondPath = QDir(branchB).filePath(
@@ -343,6 +346,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchB)));
     QTest::qWait(350);
+    qInfo() << "serializes: after branch B, updates" << updateBases.size()
+            << "paths" << updatePaths;
     QCOMPARE(updateBases.size(), 1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
@@ -353,6 +358,7 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
+    qInfo() << "serializes: second update paths" << updatePaths;
     QCOMPARE(updatePaths.at(1), QStringList{branchB});
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
