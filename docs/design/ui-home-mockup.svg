@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">MiniTreasureBox 首页 UI 示意图</title>
+  <desc id="desc">浅色桌面工具箱首页，包含侧边导航、搜索框、常用工具、AI 工作台、实用工具分类和小游戏区域。</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="8" stdDeviation="14" flood-color="#192033" flood-opacity="0.08"/>
+    </filter>
+    <filter id="smallShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#192033" flood-opacity="0.07"/>
+    </filter>
+    <linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#766CF7"/>
+      <stop offset="1" stop-color="#5A51D8"/>
+    </linearGradient>
+    <linearGradient id="aiPurple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F1EFFF"/>
+      <stop offset="1" stop-color="#E8E5FF"/>
+    </linearGradient>
+    <linearGradient id="aiMint" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#E7FAF4"/>
+      <stop offset="1" stop-color="#DDF5F0"/>
+    </linearGradient>
+    <style>
+      .font { font-family: Inter, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+      .title { fill: #172033; font-size: 28px; font-weight: 700; }
+      .section { fill: #172033; font-size: 18px; font-weight: 700; }
+      .body { fill: #172033; font-size: 14px; font-weight: 600; }
+      .muted { fill: #7A8498; font-size: 12px; font-weight: 500; }
+      .nav { fill: #667085; font-size: 14px; font-weight: 600; }
+      .navActive { fill: #5F57E8; font-size: 14px; font-weight: 700; }
+      .tiny { fill: #8C95A7; font-size: 11px; font-weight: 600; }
+      .line { stroke: #E6E8EF; stroke-width: 1; }
+    </style>
+  </defs>
+
+  <!-- Window -->
+  <rect width="1440" height="900" fill="#F5F6FA"/>
+  <rect x="0" y="0" width="1440" height="64" fill="#FFFFFF"/>
+  <line x1="0" y1="64" x2="1440" y2="64" class="line"/>
+  <circle cx="28" cy="32" r="7" fill="#FF625C"/>
+  <circle cx="52" cy="32" r="7" fill="#FFBD44"/>
+  <circle cx="76" cy="32" r="7" fill="#00CA4E"/>
+  <text x="112" y="38" class="font body" font-size="13">MiniTreasureBox</text>
+  <text x="1310" y="37" class="font muted">本地优先 · 安全可控</text>
+
+  <!-- Sidebar -->
+  <rect x="0" y="65" width="230" height="835" fill="#FFFFFF"/>
+  <line x1="230" y1="65" x2="230" y2="900" class="line"/>
+  <rect x="24" y="92" width="40" height="40" rx="13" fill="url(#brand)"/>
+  <path d="M35 108h18v12H35z M38 104h12v4H38z M33 108h22" fill="none" stroke="#FFFFFF" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="76" y="109" class="font body" font-size="15">小小百宝箱</text>
+  <text x="76" y="126" class="font muted">MiniTreasureBox</text>
+
+  <text x="28" y="177" class="font tiny">工作台</text>
+  <rect x="16" y="193" width="198" height="42" rx="11" fill="#EEECFF"/>
+  <rect x="16" y="193" width="4" height="42" rx="2" fill="#665CF2"/>
+  <text x="45" y="219" class="font navActive">⌂  首页</text>
+  <text x="45" y="264" class="font nav">✦  AI 工具</text>
+  <text x="45" y="309" class="font nav">▦  实用工具</text>
+  <text x="66" y="348" class="font nav">开发工具</text>
+  <text x="66" y="382" class="font nav">编码转换</text>
+  <text x="66" y="416" class="font nav">时间工具</text>
+  <text x="66" y="450" class="font nav">文本工具</text>
+  <text x="45" y="495" class="font nav">♟  小游戏</text>
+
+  <text x="28" y="554" class="font tiny">我的</text>
+  <text x="45" y="593" class="font nav">☆  收藏</text>
+  <text x="45" y="638" class="font nav">◷  最近使用</text>
+
+  <line x1="28" y1="678" x2="202" y2="678" class="line"/>
+  <text x="45" y="722" class="font nav">⚙  设置</text>
+  <rect x="28" y="817" width="174" height="46" rx="12" fill="#F5F6FA"/>
+  <circle cx="51" cy="840" r="14" fill="#DFF7EF"/>
+  <circle cx="51" cy="840" r="5" fill="#19A982"/>
+  <text x="75" y="837" class="font body" font-size="12">全部在本机运行</text>
+  <text x="75" y="853" class="font muted" font-size="11">不会自动上传你的内容</text>
+
+  <!-- Main content -->
+  <g transform="translate(270, 98)">
+    <text x="0" y="30" class="font title">今天想完成什么？</text>
+    <text x="0" y="57" class="font muted" font-size="14">本地工具、AI 处理和小游戏，都在这里。</text>
+
+    <!-- Search -->
+    <rect x="0" y="82" width="1100" height="58" rx="15" fill="#FFFFFF" filter="url(#shadow)"/>
+    <circle cx="29" cy="111" r="9" fill="none" stroke="#7A8498" stroke-width="2"/>
+    <line x1="36" y1="118" x2="43" y2="125" stroke="#7A8498" stroke-width="2" stroke-linecap="round"/>
+    <rect x="58" y="95" width="98" height="32" rx="8" fill="#F1F0FF"/>
+    <text x="76" y="116" class="font navActive" font-size="12">工具搜索⌄</text>
+    <text x="180" y="117" class="font muted" font-size="14">搜索工具、文件或关键词</text>
+    <rect x="1032" y="98" width="45" height="27" rx="7" fill="#F5F6FA"/>
+    <text x="1044" y="116" class="font tiny">Ctrl K</text>
+
+    <!-- Common tools -->
+    <text x="0" y="198" class="font section">常用工具</text>
+    <text x="1018" y="198" class="font navActive" font-size="12">查看全部  →</text>
+
+    <g filter="url(#smallShadow)">
+      <rect x="0" y="220" width="350" height="132" rx="16" fill="#FFFFFF"/>
+      <rect x="20" y="240" width="48" height="48" rx="14" fill="#EEECFF"/>
+      <text x="34" y="271" font-size="23" fill="#665CF2" class="font">{ }</text>
+      <text x="88" y="259" class="font body" font-size="16">JSON 格式化</text>
+      <text x="88" y="281" class="font muted">美化、压缩并检查 JSON</text>
+      <text x="20" y="327" class="font tiny">开发工具</text>
+      <circle cx="99" cy="324" r="4" fill="#19A982"/>
+      <text x="110" y="328" class="font tiny">本地运行</text>
+      <text x="317" y="269" class="font" font-size="19" fill="#F0B84B">★</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="375" y="220" width="350" height="132" rx="16" fill="#FFFFFF"/>
+      <rect x="395" y="240" width="48" height="48" rx="14" fill="#E7FAF4"/>
+      <path d="M410 273l9-17 9 17h-18z M419 250v-5 M412 253l-4-4 M426 253l4-4" fill="none" stroke="#19A982" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="463" y="259" class="font body" font-size="16">图片 OCR</text>
+      <text x="463" y="281" class="font muted">从图片中提取文字</text>
+      <text x="395" y="327" class="font tiny">AI 工具</text>
+      <circle cx="466" cy="324" r="4" fill="#19A982"/>
+      <text x="477" y="328" class="font tiny">本地处理</text>
+      <text x="692" y="269" class="font" font-size="19" fill="#F0B84B">★</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="750" y="220" width="350" height="132" rx="16" fill="#FFFFFF"/>
+      <rect x="770" y="240" width="48" height="48" rx="14" fill="#FFF3DE"/>
+      <circle cx="794" cy="264" r="13" fill="none" stroke="#C98519" stroke-width="2.5"/>
+      <path d="M794 256v9l6 4" fill="none" stroke="#C98519" stroke-width="2.5" stroke-linecap="round"/>
+      <text x="838" y="259" class="font body" font-size="16">时间戳转换</text>
+      <text x="838" y="281" class="font muted">Unix 时间与日期互转</text>
+      <text x="770" y="327" class="font tiny">时间工具</text>
+      <circle cx="841" cy="324" r="4" fill="#19A982"/>
+      <text x="852" y="328" class="font tiny">本地运行</text>
+      <text x="1067" y="269" class="font" font-size="19" fill="#F0B84B">☆</text>
+    </g>
+
+    <!-- AI workspace -->
+    <text x="0" y="414" class="font section">AI 工作台</text>
+    <text x="1018" y="414" class="font navActive" font-size="12">查看全部  →</text>
+    <g filter="url(#smallShadow)">
+      <rect x="0" y="436" width="535" height="142" rx="18" fill="url(#aiPurple)"/>
+      <circle cx="478" cy="478" r="31" fill="#FFFFFF" fill-opacity="0.72"/>
+      <path d="M468 478c4-12 18-12 22 0-4 12-18 12-22 0z M479 465v-7 M479 491v7 M466 478h-7 M492 478h7" fill="none" stroke="#665CF2" stroke-width="2.2" stroke-linecap="round"/>
+      <text x="24" y="472" class="font body" font-size="18">图片 OCR</text>
+      <text x="24" y="500" class="font muted" font-size="14">识别图片中的文字，支持拖放和剪贴板</text>
+      <rect x="24" y="525" width="100" height="26" rx="8" fill="#FFFFFF" fill-opacity="0.75"/>
+      <text x="41" y="542" class="font tiny" fill="#5F57E8">开始使用  →</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="565" y="436" width="535" height="142" rx="18" fill="url(#aiMint)"/>
+      <circle cx="1043" cy="478" r="31" fill="#FFFFFF" fill-opacity="0.72"/>
+      <rect x="1026" y="461" width="34" height="32" rx="5" fill="none" stroke="#19A982" stroke-width="2.2"/>
+      <path d="M1033 470c5 5 9 5 15 0 M1033 481c5 5 9 5 15 0" fill="none" stroke="#19A982" stroke-width="2" stroke-linecap="round"/>
+      <text x="589" y="472" class="font body" font-size="18">试卷复原</text>
+      <text x="589" y="500" class="font muted" font-size="14">检测彩色笔迹，保留 Mask 编辑和原图对比</text>
+      <rect x="589" y="525" width="100" height="26" rx="8" fill="#FFFFFF" fill-opacity="0.75"/>
+      <text x="606" y="542" class="font tiny" fill="#159875">开始使用  →</text>
+    </g>
+
+    <!-- Utility categories -->
+    <text x="0" y="634" class="font section">实用工具</text>
+    <text x="1018" y="634" class="font navActive" font-size="12">查看全部  →</text>
+    <g filter="url(#smallShadow)">
+      <rect x="0" y="655" width="254" height="93" rx="15" fill="#FFFFFF"/>
+      <circle cx="31" cy="688" r="17" fill="#EEECFF"/>
+      <text x="23" y="695" class="font" font-size="16" fill="#665CF2">&lt;/&gt;</text>
+      <text x="61" y="684" class="font body">开发工具</text>
+      <text x="61" y="706" class="font muted">JSON、文本与开发辅助</text>
+      <text x="214" y="685" class="font tiny">6 个</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="282" y="655" width="254" height="93" rx="15" fill="#FFFFFF"/>
+      <circle cx="313" cy="688" r="17" fill="#E7FAF4"/>
+      <path d="M305 688h16 M313 680v16" stroke="#19A982" stroke-width="2.3" stroke-linecap="round"/>
+      <text x="343" y="684" class="font body">编码转换</text>
+      <text x="343" y="706" class="font muted">Base64 与 URL 编解码</text>
+      <text x="496" y="685" class="font tiny">2 个</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="564" y="655" width="254" height="93" rx="15" fill="#FFFFFF"/>
+      <circle cx="595" cy="688" r="17" fill="#FFF3DE"/>
+      <circle cx="595" cy="688" r="8" fill="none" stroke="#C98519" stroke-width="2"/>
+      <text x="625" y="684" class="font body">时间工具</text>
+      <text x="625" y="706" class="font muted">时间戳和日期处理</text>
+      <text x="778" y="685" class="font tiny">2 个</text>
+    </g>
+    <g filter="url(#smallShadow)">
+      <rect x="846" y="655" width="254" height="93" rx="15" fill="#FFFFFF"/>
+      <circle cx="877" cy="688" r="17" fill="#FDECEF"/>
+      <text x="868" y="695" class="font" font-size="16" fill="#D6455D">T</text>
+      <text x="907" y="684" class="font body">文本工具</text>
+      <text x="907" y="706" class="font muted">统计、整理和处理文本</text>
+      <text x="1060" y="685" class="font tiny">2 个</text>
+    </g>
+
+    <!-- Bottom hint -->
+    <text x="0" y="795" class="font muted">本地优先 · 不上传内容 · 支持键盘操作</text>
+    <text x="950" y="795" class="font muted">按 Ctrl K 快速搜索　 ·　按 Esc 返回</text>
+  </g>
+</svg>
