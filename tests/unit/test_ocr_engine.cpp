@@ -5,6 +5,7 @@
 #include <QElapsedTimer>
 #include <QFile>
 #include <QImage>
+#include <QLibraryInfo>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -51,6 +52,17 @@ void createEmptyFile(const QString& path)
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
 }
+
+#ifdef Q_OS_WIN
+void copyQtCoreRuntime(const QString& destinationDirectory)
+{
+    const QString source = QDir(QLibraryInfo::path(QLibraryInfo::LibrariesPath))
+                               .filePath(QStringLiteral("Qt6Core.dll"));
+    QVERIFY2(QFileInfo::exists(source), qPrintable(source));
+    const QString destination = QDir(destinationDirectory).filePath(QStringLiteral("Qt6Core.dll"));
+    QVERIFY2(QFile::copy(source, destination), qPrintable(destination));
+}
+#endif
 
 class ScopedEnvironment final {
 public:
@@ -153,6 +165,9 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
     QVERIFY(QDir().mkpath(runtimeData));
     const QString packagedExecutable = QDir(runtimeBin).filePath(packagedExecutableName());
     QVERIFY(QFile::copy(fixtureExecutable(), packagedExecutable));
+#ifdef Q_OS_WIN
+    copyQtCoreRuntime(runtimeBin);
+#endif
     QVERIFY(QFile::setPermissions(packagedExecutable, QFile::permissions(packagedExecutable)
                                                      | QFileDevice::ExeOwner
                                                      | QFileDevice::ExeGroup
@@ -201,6 +216,9 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
     QVERIFY(QDir().mkpath(fallbackDirectory));
     const QString fallbackExecutable = QDir(fallbackDirectory).filePath(packagedExecutableName());
     QVERIFY(QFile::copy(fixtureExecutable(), fallbackExecutable));
+#ifdef Q_OS_WIN
+    copyQtCoreRuntime(fallbackDirectory);
+#endif
     QVERIFY(QFile::setPermissions(fallbackExecutable, QFile::permissions(fallbackExecutable)
                                                      | QFileDevice::ExeOwner
                                                      | QFileDevice::ExeGroup

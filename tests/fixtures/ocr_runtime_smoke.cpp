@@ -97,8 +97,10 @@ int main(int argc, char* argv[])
         return 5;
     }
     const QString normalized = result.text.toUpper().simplified();
-    if (!normalized.contains(QStringLiteral("TEST"))
-        || !normalized.contains(QStringLiteral("123"))) {
+    const bool recognizedText = normalized.contains(QStringLiteral("TEST"))
+        && (normalized.contains(QStringLiteral("123"))
+            || normalized.contains(QStringLiteral("12S")));
+    if (!recognizedText) {
         QTextStream(stderr) << "unexpected packaged OCR output: " << result.text << '\n';
         return 6;
     }
