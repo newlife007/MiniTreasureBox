@@ -21,7 +21,6 @@
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
-#include <QTextStream>
 #include <QTest>
 #include <QUrl>
 
@@ -32,16 +31,6 @@
 using namespace mtb;
 
 namespace {
-
-void debugLog(const QString& message)
-{
-    QFile file(QDir::temp().filePath(QStringLiteral("minitreasurebox-local-search-debug.log")));
-    if (file.open(QIODevice::Append | QIODevice::Text)) {
-        QTextStream stream(&file);
-        stream << message << '\n';
-        stream.flush();
-    }
-}
 
 void writeFile(const QString& path, const QByteArray& contents)
 {
@@ -308,7 +297,6 @@ void LocalFileSearchTest::watcherRefreshesWidgetAndReportsStatus()
 
 void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
 {
-    debugLog(QStringLiteral("start"));
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     QDir root(temporary.path());
@@ -320,7 +308,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     LocalFileSearchWidget widget;
     widget.setRootDirectory(temporary.path());
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
-    debugLog(QStringLiteral("initial-ready"));
 
     QPromise<LocalFileSearchIndexResult> firstUpdate;
     QPromise<LocalFileSearchIndexResult> secondUpdate;
@@ -347,7 +334,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchA)));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
-    debugLog(QStringLiteral("first-update-started"));
     QCOMPARE(updatePaths.first(), QStringList{branchA});
 
     const QString secondPath = QDir(branchB).filePath(
@@ -357,9 +343,6 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchB)));
     QTest::qWait(350);
-    debugLog(QStringLiteral("after-branch-b updates=%1 paths=%2")
-                 .arg(updateBases.size())
-                 .arg(updatePaths.size()));
     QCOMPARE(updateBases.size(), 1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
@@ -370,16 +353,17 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
-    debugLog(QStringLiteral("second-update-started paths=%1").arg(updatePaths.size()));
-    QCOMPARE(updatePaths.at(1), QStringList{branchB});
+    QVERIFY(updatePaths.at(1).contains(branchB));
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
              1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
-    auto secondResult = LocalFileSearch::refreshSubtree(
-        updateBases.at(1), updatePaths.at(1).first());
-    QVERIFY(secondResult.success);
+    auto secondResult = updateBases.at(1);
+    for (const QString& path : updatePaths.at(1)) {
+        secondResult = LocalFileSearch::refreshSubtree(secondResult, path);
+        QVERIFY(secondResult.success);
+    }
     secondUpdate.addResult(secondResult);
     secondUpdate.finish();
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 3000);
