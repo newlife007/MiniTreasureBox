@@ -2,6 +2,7 @@
 
 #include <QApplication>
 #include <QClipboard>
+#include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -10,7 +11,6 @@
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
-#include <QLineEdit>
 #include <QMimeData>
 #include <QPointer>
 #include <QPushButton>
@@ -41,12 +41,10 @@ OcrWidget::OcrWidget(QWidget* parent)
     : QWidget(parent)
     , preview_(new QLabel(this))
     , status_(new QLabel(tr("等待导入图片。"), this))
-    , executable_(new QLineEdit(this))
-    , tessdata_(new QLineEdit(this))
-    , language_(new QLineEdit(this))
+    , language_(new QComboBox(this))
     , result_(new QTextEdit(this))
     , recognizeButton_(makeButton(tr("开始识别"), QStringLiteral("ocrRecognizeButton"),
-                                  tr("使用配置的本地 Tesseract 识别当前图片"), this))
+                                  tr("使用应用内置的离线 OCR 组件识别当前图片"), this))
     , cancelButton_(makeButton(tr("取消"), QStringLiteral("ocrCancelButton"),
                                tr("取消正在运行的本地识别任务"), this))
     , retryButton_(makeButton(tr("重试"), QStringLiteral("ocrRetryButton"),
@@ -59,25 +57,15 @@ OcrWidget::OcrWidget(QWidget* parent)
     setObjectName(QStringLiteral("ocrWidget"));
     setAcceptDrops(true);
 
-    QSettings settings;
-    const QString environmentExecutable = qEnvironmentVariable("MINITREASUREBOX_TESSERACT",
-                                                                 QStringLiteral("tesseract"));
-    executable_->setText(settings.value(QStringLiteral("ai/ocr/executable"),
-                                         environmentExecutable).toString());
-    tessdata_->setText(settings.value(QStringLiteral("ai/ocr/tessdata"),
-                                       qEnvironmentVariable("TESSDATA_PREFIX")).toString());
-    language_->setText(settings.value(QStringLiteral("ai/ocr/language"),
-                                       QStringLiteral("chi_sim+eng")).toString());
-
-    executable_->setObjectName(QStringLiteral("ocrExecutable"));
-    executable_->setPlaceholderText(tr("例如 tesseract 或本地可执行文件路径"));
-    executable_->setAccessibleName(tr("Tesseract 可执行文件"));
-    tessdata_->setObjectName(QStringLiteral("ocrTessdata"));
-    tessdata_->setPlaceholderText(tr("可选，本地 tessdata 目录"));
-    tessdata_->setAccessibleName(tr("Tesseract 语言模型目录"));
     language_->setObjectName(QStringLiteral("ocrLanguage"));
-    language_->setPlaceholderText(QStringLiteral("chi_sim+eng"));
-    language_->setAccessibleName(tr("OCR 语言代码"));
+    language_->setAccessibleName(tr("OCR 识别语言"));
+    language_->addItem(tr("简体中文和英文"), QStringLiteral("chi_sim+eng"));
+    language_->addItem(tr("简体中文"), QStringLiteral("chi_sim"));
+    language_->addItem(tr("英文"), QStringLiteral("eng"));
+    const QString savedLanguage = QSettings().value(
+        QStringLiteral("ai/ocr/language"), QStringLiteral("chi_sim+eng")).toString();
+    const int savedLanguageIndex = language_->findData(savedLanguage);
+    language_->setCurrentIndex(savedLanguageIndex >= 0 ? savedLanguageIndex : 0);
 
     preview_->setObjectName(QStringLiteral("ocrPreview"));
     preview_->setAccessibleName(tr("待识别图片预览"));
@@ -111,8 +99,6 @@ OcrWidget::OcrWidget(QWidget* parent)
     sourceActions->addStretch();
 
     auto* configuration = new QFormLayout;
-    configuration->addRow(tr("Tesseract 程序"), executable_);
-    configuration->addRow(tr("tessdata 目录"), tessdata_);
     configuration->addRow(tr("识别语言"), language_);
 
     auto* resultActions = new QHBoxLayout;
@@ -153,14 +139,9 @@ OcrWidget::OcrWidget(QWidget* parent)
         copyButton_->setEnabled(canUseResult);
         exportButton_->setEnabled(canUseResult);
     });
-    connect(executable_, &QLineEdit::editingFinished, this, [this] {
-        QSettings().setValue(QStringLiteral("ai/ocr/executable"), executable_->text().trimmed());
-    });
-    connect(tessdata_, &QLineEdit::editingFinished, this, [this] {
-        QSettings().setValue(QStringLiteral("ai/ocr/tessdata"), tessdata_->text().trimmed());
-    });
-    connect(language_, &QLineEdit::editingFinished, this, [this] {
-        QSettings().setValue(QStringLiteral("ai/ocr/language"), language_->text().trimmed());
+    connect(language_, &QComboBox::currentIndexChanged, this, [this] {
+        QSettings().setValue(QStringLiteral("ai/ocr/language"),
+                             language_->currentData().toString());
     });
 }
 
@@ -242,7 +223,7 @@ void OcrWidget::startRecognition()
     const auto cancellation = cancellation_;
     QPointer<OcrWidget> guard(this);
     setBusy(true);
-    status_->setText(tr("正在使用本地 Tesseract 识别，可以随时取消。"));
+    status_->setText(tr("正在使用应用内置的离线 OCR 组件识别，可以随时取消。"));
 
     workerThread_ = QThread::create([currentRequest, cancellation, guard, currentTask] {
         const TesseractOcrEngine engine;
@@ -371,8 +352,6 @@ void OcrWidget::setBusy(bool busy)
     recognizeButton_->setEnabled(!busy && !imagePath_.isEmpty());
     cancelButton_->setEnabled(busy);
     retryButton_->setEnabled(!busy && !imagePath_.isEmpty());
-    executable_->setEnabled(!busy);
-    tessdata_->setEnabled(!busy);
     language_->setEnabled(!busy);
     copyButton_->setEnabled(!busy && resultValid_ && !result_->toPlainText().isEmpty());
     exportButton_->setEnabled(!busy && resultValid_ && !result_->toPlainText().isEmpty());
@@ -408,8 +387,7 @@ void OcrWidget::showImportError(const QString& message)
 
 OcrRequest OcrWidget::request() const
 {
-    return {imagePath_, executable_->text().trimmed(), tessdata_->text().trimmed(),
-            language_->text().trimmed(), 60000};
+    return {imagePath_, {}, {}, language_->currentData().toString(), 60000};
 }
 
 QWidget* createOcrWidget(QWidget* parent)

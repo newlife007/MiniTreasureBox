@@ -80,6 +80,16 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+    add_test(NAME ocr_runtime_fetch
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/unit/test_fetch_ocr_runtime.py"
+                "${CMAKE_SOURCE_DIR}/scripts/fetch_ocr_runtime.py")
+    add_test(NAME ocr_runtime_staging
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_SOURCE_DIR}/tests/unit/test_stage_ocr_runtime.py"
+                "${CMAKE_SOURCE_DIR}/scripts/stage_ocr_runtime.py")
 
     add_executable(test_tool_registry tests/unit/test_tool_registry.cpp)
     target_link_libraries(test_tool_registry PRIVATE minitreasurebox_foundation Qt6::Test)
@@ -111,6 +121,9 @@ if(BUILD_TESTING)
 
     add_executable(fake_tesseract tests/fixtures/fake_tesseract.cpp)
     target_link_libraries(fake_tesseract PRIVATE Qt6::Core)
+
+    add_executable(ocr_runtime_smoke tests/fixtures/ocr_runtime_smoke.cpp)
+    target_link_libraries(ocr_runtime_smoke PRIVATE minitreasurebox_foundation)
 
     add_executable(test_ocr_engine tests/unit/test_ocr_engine.cpp)
     target_link_libraries(test_ocr_engine PRIVATE minitreasurebox_foundation Qt6::Test)
@@ -144,12 +157,85 @@ if(BUILD_TESTING)
 endif()
 
 include(GNUInstallDirs)
+
+set(MINITREASUREBOX_OCR_RUNTIME_ROOT "" CACHE PATH
+    "Path to a staged, relocatable Tesseract runtime")
+option(MINITREASUREBOX_REQUIRE_BUNDLED_OCR
+    "Fail configuration unless a complete bundled OCR runtime is staged" OFF)
+
+set(_mtb_ocr_runtime_ready FALSE)
+if(MINITREASUREBOX_OCR_RUNTIME_ROOT)
+    get_filename_component(_mtb_ocr_root
+        "${MINITREASUREBOX_OCR_RUNTIME_ROOT}" ABSOLUTE)
+    if(WIN32)
+        set(_mtb_ocr_executable_candidates
+            "${_mtb_ocr_root}/Library/bin/tesseract.exe"
+            "${_mtb_ocr_root}/bin/tesseract.exe")
+        file(GLOB _mtb_ocr_runtime_libraries
+            "${_mtb_ocr_root}/Library/bin/*.dll"
+            "${_mtb_ocr_root}/bin/*.dll")
+    elseif(APPLE)
+        set(_mtb_ocr_executable_candidates "${_mtb_ocr_root}/bin/tesseract")
+        file(GLOB _mtb_ocr_runtime_libraries "${_mtb_ocr_root}/lib/*.dylib")
+    endif()
+
+    set(_mtb_ocr_executable "")
+    foreach(_candidate IN LISTS _mtb_ocr_executable_candidates)
+        if(EXISTS "${_candidate}")
+            set(_mtb_ocr_executable "${_candidate}")
+            break()
+        endif()
+    endforeach()
+    if((WIN32 OR APPLE) AND NOT _mtb_ocr_executable)
+        message(FATAL_ERROR
+            "The staged OCR runtime has no Tesseract executable: ${_mtb_ocr_root}")
+    endif()
+    if((WIN32 OR APPLE) AND NOT _mtb_ocr_runtime_libraries)
+        message(FATAL_ERROR
+            "The staged OCR runtime has no transitive runtime libraries: ${_mtb_ocr_root}")
+    endif()
+    foreach(_language eng chi_sim)
+        if(NOT EXISTS "${_mtb_ocr_root}/share/tessdata/${_language}.traineddata")
+            message(FATAL_ERROR
+                "The staged OCR runtime is missing ${_language}.traineddata")
+        endif()
+    endforeach()
+    if(NOT EXISTS "${_mtb_ocr_root}/licenses/THIRD_PARTY_MANIFEST.md")
+        message(FATAL_ERROR
+            "The staged OCR runtime is missing third-party license notices")
+    endif()
+    set(_mtb_ocr_runtime_ready TRUE)
+endif()
+
+if(MINITREASUREBOX_REQUIRE_BUNDLED_OCR AND NOT _mtb_ocr_runtime_ready)
+    message(FATAL_ERROR
+        "MINITREASUREBOX_REQUIRE_BUNDLED_OCR requires MINITREASUREBOX_OCR_RUNTIME_ROOT")
+endif()
+
 if(APPLE)
     install(TARGETS MiniTreasureBox BUNDLE DESTINATION .)
 elseif(WIN32)
     install(TARGETS MiniTreasureBox RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 else()
     install(TARGETS MiniTreasureBox RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
+endif()
+
+if(_mtb_ocr_runtime_ready AND WIN32)
+    install(DIRECTORY "${_mtb_ocr_root}/"
+        DESTINATION "ocr-runtime"
+        USE_SOURCE_PERMISSIONS)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+        "${CMAKE_SOURCE_DIR}/licenses/Apache-2.0.txt"
+        DESTINATION "licenses")
+elseif(_mtb_ocr_runtime_ready AND APPLE)
+    install(DIRECTORY "${_mtb_ocr_root}/"
+        DESTINATION "MiniTreasureBox.app/Contents/Resources/ocr-runtime"
+        USE_SOURCE_PERMISSIONS)
+    install(FILES
+        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
+        "${CMAKE_SOURCE_DIR}/licenses/Apache-2.0.txt"
+        DESTINATION "MiniTreasureBox.app/Contents/Resources/licenses")
 endif()
 
 if(WIN32 OR APPLE)
@@ -165,6 +251,12 @@ if(WIN32 OR APPLE)
     set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "MiniTreasureBox desktop utilities")
     set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
     set(CPACK_PACKAGE_DIRECTORY "${CMAKE_BINARY_DIR}/packages")
+    set(MINITREASUREBOX_PACKAGE_ARCH_SUFFIX "" CACHE STRING
+        "Optional architecture suffix for native package file names")
+    set(_mtb_package_arch_suffix "")
+    if(MINITREASUREBOX_PACKAGE_ARCH_SUFFIX)
+        set(_mtb_package_arch_suffix "-${MINITREASUREBOX_PACKAGE_ARCH_SUFFIX}")
+    endif()
 
     if(WIN32)
         set(CPACK_GENERATOR "NSIS")
@@ -175,7 +267,7 @@ if(WIN32 OR APPLE)
         set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
     else()
         set(CPACK_GENERATOR "DragNDrop")
-        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-macos-unsigned-preview")
+        set(CPACK_PACKAGE_FILE_NAME "${PROJECT_NAME}-${PROJECT_VERSION}-macos${_mtb_package_arch_suffix}-unsigned-preview")
         set(CPACK_DMG_VOLUME_NAME "${PROJECT_NAME} ${PROJECT_VERSION}")
     endif()
 

@@ -7,6 +7,10 @@ CTestTestfile.cmake
 cmake_install.cmake
 compile_commands.json
 
+# Python packaging script caches
+__pycache__/
+*.py[cod]
+
 # IDE and platform files
 .vscode/
 .idea/

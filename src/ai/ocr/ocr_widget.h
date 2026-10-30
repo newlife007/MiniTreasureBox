@@ -8,8 +8,8 @@
 #include <atomic>
 #include <memory>
 
+class QComboBox;
 class QLabel;
-class QLineEdit;
 class QPushButton;
 class QTextEdit;
 class QThread;
@@ -47,9 +47,7 @@ private:
     QTemporaryDir clipboardDirectory_;
     QLabel* preview_;
     QLabel* status_;
-    QLineEdit* executable_;
-    QLineEdit* tessdata_;
-    QLineEdit* language_;
+    QComboBox* language_;
     QTextEdit* result_;
     QPushButton* recognizeButton_;
     QPushButton* cancelButton_;

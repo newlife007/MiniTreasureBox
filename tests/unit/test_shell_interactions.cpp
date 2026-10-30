@@ -120,10 +120,12 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     auto* grid = window.findChild<ToolGrid*>(QStringLiteral("toolGrid"));
     auto* pages = window.findChild<QStackedWidget*>(QStringLiteral("mainPages"));
     auto* search = window.findChild<QLineEdit*>(QStringLiteral("globalSearch"));
+    auto* heading = window.findChild<QLabel*>(QStringLiteral("pageHeading"));
     QVERIFY(navigation);
     QVERIFY(grid);
     QVERIFY(pages);
     QVERIFY(search);
+    QVERIFY(heading);
 
     QListWidgetItem* practical = itemWithText(navigation, QStringLiteral("实用工具"));
     QVERIFY(practical);
@@ -144,10 +146,40 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QCOMPARE(history.recentToolIds().value(0), QStringLiteral("json-formatter"));
     QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("toolPage_json-formatter"));
 
+    auto* backButton = pages->currentWidget()->findChild<QPushButton*>(
+        QStringLiteral("backButton"));
+    QVERIFY(backButton);
+    QCOMPARE(backButton->text(), QStringLiteral("返回上一页"));
+    QCOMPARE(backButton->accessibleName(), QStringLiteral("返回上一页"));
+    QVERIFY(backButton->toolTip().contains(QStringLiteral("工具列表")));
+    QVERIFY(backButton->accessibleDescription().contains(QStringLiteral("工具列表")));
+    backButton->click();
+    QCoreApplication::processEvents();
+    QCOMPARE(navigation->currentItem(), favorites);
+    QCOMPARE(heading->text(), QStringLiteral("收藏工具"));
+    QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("json-formatter")});
+    QVERIFY(!grid->toolIds().contains(QStringLiteral("base64-codec")));
+    QVERIFY(pages->currentWidget()->objectName() != QStringLiteral("toolPage_json-formatter"));
+
+    QListWidgetItem* development = itemWithText(navigation, QStringLiteral("开发工具"));
+    QVERIFY(development);
+    clickItem(navigation, development);
+    QCOMPARE(grid->toolIds(),
+             QStringList({QStringLiteral("json-formatter"),
+                          QStringLiteral("uuid-generator")}));
+    ToolCard* categoryTool = grid->cardForTool(QStringLiteral("json-formatter"));
+    QVERIFY(categoryTool);
+    categoryTool->findChild<QPushButton*>(QStringLiteral("openButton"))->click();
+    QCoreApplication::processEvents();
+    QCOMPARE(pages->currentWidget()->objectName(), QStringLiteral("toolPage_json-formatter"));
+
     QTest::keyClick(&window, Qt::Key_Escape);
     QCoreApplication::processEvents();
-    QCOMPARE(navigation->currentRow(), 0);
-    QVERIFY(pages->currentWidget()->objectName() != QStringLiteral("toolPage_json-formatter"));
+    QCOMPARE(navigation->currentItem(), development);
+    QCOMPARE(heading->text(), QStringLiteral("分类：开发工具"));
+    QCOMPARE(grid->toolIds(),
+             QStringList({QStringLiteral("json-formatter"),
+                          QStringLiteral("uuid-generator")}));
 
     QListWidgetItem* recent = itemWithText(navigation, QStringLiteral("最近使用"));
     QVERIFY(recent);
@@ -172,7 +204,20 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QTest::keyClick(&window, Qt::Key_K, Qt::ControlModifier);
     QCoreApplication::processEvents();
     QCOMPARE(navigation->currentRow(), 0);
+    QCOMPARE(heading->text(), QStringLiteral("工具首页"));
     QVERIFY(search->hasFocus());
+
+    ToolCard* homeTool = grid->cardForTool(QStringLiteral("json-formatter"));
+    QVERIFY(homeTool);
+    homeTool->findChild<QPushButton*>(QStringLiteral("openButton"))->click();
+    QCoreApplication::processEvents();
+    auto* homeBackButton = pages->currentWidget()->findChild<QPushButton*>(
+        QStringLiteral("backButton"));
+    QVERIFY(homeBackButton);
+    homeBackButton->click();
+    QCoreApplication::processEvents();
+    QCOMPARE(navigation->currentRow(), 0);
+    QCOMPARE(heading->text(), QStringLiteral("工具首页"));
 
     themeSelector->setCurrentIndex(themeSelector->findData(static_cast<int>(Theme::System)));
     QCOMPARE(settings.theme(), Theme::System);

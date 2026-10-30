@@ -21,7 +21,7 @@ enum class OcrError {
 
 struct OcrRequest {
     QString imagePath;
-    QString executable{QStringLiteral("tesseract")};
+    QString executable;
     QString tessdataPath;
     QString language{QStringLiteral("chi_sim+eng")};
     int timeoutMs{60000};
@@ -48,6 +48,9 @@ public:
         const OcrRequest& request,
         const std::atomic_bool* cancellation = nullptr) const override;
 
+    [[nodiscard]] static OcrRequest resolvedRequest(
+        const OcrRequest& request,
+        const QString& applicationDirPath = {});
     [[nodiscard]] static OcrResult validate(const OcrRequest& request);
     [[nodiscard]] static QStringList argumentsFor(const OcrRequest& request);
 };

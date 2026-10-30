@@ -32,7 +32,7 @@ private:
     void handleNavigation(QListWidgetItem* item);
     void openTool(const QString& toolId);
     void showToolOverview(const QString& toolId);
-    void returnHome();
+    void returnToPreviousView();
     void applyTheme(Theme theme);
 
     ToolRegistry& registry_;

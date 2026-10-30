@@ -123,7 +123,7 @@ void registerBuiltinTools(ToolRegistry& registry)
         {QStringLiteral("image-ocr"),
          QStringLiteral("图片 OCR"),
          QStringLiteral("AI 工具"),
-         QStringLiteral("使用单独安装的本地 Tesseract 和语言模型识别图片文字。"),
+         QStringLiteral("使用应用内置的离线 OCR 组件识别简体中文和英文图片文字。"),
          {QStringLiteral("ocr"), QStringLiteral("图片"), QStringLiteral("文字识别"),
           QStringLiteral("tesseract"), QStringLiteral("image text")},
          {QStringLiteral("Image OCR"), QStringLiteral("光学字符识别")},
