@@ -174,7 +174,7 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
                               argumentCapture.toUtf8());
     const TesseractOcrEngine engine;
     const OcrResult packagedResult = engine.recognize(packaged);
-    QVERIFY(packagedResult.ok);
+    QVERIFY2(packagedResult.ok, qPrintable(packagedResult.message));
     QCOMPARE(packagedResult.text, QStringLiteral("fixture text for packaged-page"));
     QFile captured(argumentCapture);
     QVERIFY(captured.open(QIODevice::ReadOnly));
@@ -210,7 +210,8 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
         const OcrRequest fallback = TesseractOcrEngine::resolvedRequest(
             unresolved, directory.filePath(QStringLiteral("unpackaged/bin")));
         QCOMPARE(fallback.executable, QStringLiteral("tesseract"));
-        QVERIFY(engine.recognize(fallback).ok);
+        const OcrResult fallbackResult = engine.recognize(fallback);
+        QVERIFY2(fallbackResult.ok, qPrintable(fallbackResult.message));
     }
 }
 

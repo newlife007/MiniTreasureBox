@@ -120,6 +120,10 @@ if(BUILD_TESTING)
     add_test(NAME game_widgets COMMAND test_game_widgets)
 
     add_executable(fake_tesseract tests/fixtures/fake_tesseract.cpp)
+    if(MSVC)
+        set_property(TARGET fake_tesseract PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
 
     add_executable(ocr_runtime_smoke tests/fixtures/ocr_runtime_smoke.cpp)
     target_link_libraries(ocr_runtime_smoke PRIVATE minitreasurebox_foundation)
