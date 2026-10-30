@@ -114,7 +114,7 @@ ctest --test-dir build -C Release --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G NSIS
 ```
 
-生成的安装程序为 `build/packages/MiniTreasureBox-0.1.3-windows-x64-unsigned-preview.exe`，其中包含应用程序、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。安装后无需修改 `PATH`、安装 Tesseract 或配置其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
+生成的安装程序为 `build/packages/MiniTreasureBox-0.1.4-windows-x64-unsigned-preview.exe`，其中包含应用程序、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。安装后无需修改 `PATH`、安装 Tesseract 或配置其他用户环境变量即可运行。该预览安装程序尚未进行 Authenticode 签名，因此 Windows 会将发布者显示为未知。
 
 macOS 分别在原生 Intel 和 Apple Silicon 构建机上使用 `ocr-runtime-osx-64.lock` 与 `ocr-runtime-osx-arm64.lock`。以下为 Intel 示例，Apple Silicon 将架构和锁文件分别改为 `arm64` 与 `ocr-runtime-osx-arm64.lock`：
 
@@ -143,13 +143,13 @@ ctest --test-dir build --output-on-failure
 cpack --config build/CPackConfig.cmake -C Release -G DragNDrop
 ```
 
-生成的磁盘映像按架构命名为 `build/packages/MiniTreasureBox-0.1.3-macos-x64-unsigned-preview.dmg` 或 `MiniTreasureBox-0.1.3-macos-arm64-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app`、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。复制应用后无需另行安装 OCR 依赖。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
+生成的磁盘映像按架构命名为 `build/packages/MiniTreasureBox-0.1.4-macos-x64-unsigned-preview.dmg` 或 `MiniTreasureBox-0.1.4-macos-arm64-unsigned-preview.dmg`，其中包含可部署的 `MiniTreasureBox.app`、Qt 库及插件、可重定位的 Tesseract 运行库、`chi_sim+eng` 模型和第三方许可证。复制应用后无需另行安装 OCR 依赖。该预览应用尚未进行 Developer ID 签名、公证或装订，因此 macOS Gatekeeper 可能阻止其运行。
 
 GitHub Actions 的 **Build release packages** 工作流也可以手动运行。手动运行会保留 Windows 和 macOS 安装包各 14 天，可从该次工作流的 Artifacts 区域下载，但不会创建 GitHub Release。发布新版本时，先确保 `CMakeLists.txt` 中的项目版本正确，再推送同版本的 `v` 前缀标签，例如：
 
 ```bash
-git tag v0.1.3
-git push origin v0.1.3
+git tag v0.1.4
+git push origin v0.1.4
 ```
 
 工作流会从 `CMakeLists.txt` 读取项目版本；标签必须与 `v${PROJECT_VERSION}` 完全一致，否则会在打包前失败。有效的 `v*` 标签会触发 Windows x64、macOS Intel 和 macOS Apple Silicon 的原生构建与测试，并对生成的 `.exe` 与两个 `.dmg` 执行安装、启动、内置 OCR 实图识别和移除冒烟测试。全部验证通过后，工作流会将三个文件发布到该标签对应、明确标记为 **unsigned preview** 的预发布 GitHub Release。当前安装包不适合作为经过生产签名的正式发布物；待配置受保护的签名凭据后，才应移除该标记。

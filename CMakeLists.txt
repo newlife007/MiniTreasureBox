@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(MiniTreasureBox VERSION 0.1.3 LANGUAGES CXX)
+project(MiniTreasureBox VERSION 0.1.4 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -143,16 +143,14 @@ if(BUILD_TESTING)
     target_link_libraries(test_removal_widget PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME removal_widget COMMAND test_removal_widget)
 
-    set_tests_properties(tool_logic shell_interactions tool_cards game_widgets ocr_engine ocr_widget removal_engine removal_widget PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
-    )
-
     add_executable(test_local_file_search tests/unit/test_local_file_search.cpp)
     target_link_libraries(test_local_file_search PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME local_file_search COMMAND test_local_file_search)
 
-    set_tests_properties(tool_logic shell_interactions tool_cards local_file_search PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    set_tests_properties(
+        tool_logic shell_interactions tool_cards game_widgets
+        ocr_engine ocr_widget removal_engine removal_widget local_file_search
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()
 
