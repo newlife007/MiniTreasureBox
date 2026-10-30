@@ -171,6 +171,10 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
     QCOMPARE(packaged.executable, QFileInfo(packagedExecutable).canonicalFilePath());
     QCOMPARE(packaged.tessdataPath, QFileInfo(runtimeData).canonicalFilePath());
 
+#ifndef Q_OS_WIN
+    // The Windows installer smoke test exercises the packaged OCR runtime with a sanitized PATH.
+    // The unit test only checks Windows runtime resolution because its copied fixture is not the
+    // same native OCR payload used by the installer.
     const QString argumentCapture = directory.filePath(QStringLiteral("arguments.txt"));
     ScopedEnvironment capture("MINITREASUREBOX_FAKE_TESSERACT_ARGUMENTS",
                               argumentCapture.toUtf8());
@@ -183,6 +187,9 @@ void OcrEngineTest::resolvesPackagedRuntimeAndEnvironmentOverrides()
     const QStringList passedArguments = QString::fromUtf8(captured.readAll()).split(QLatin1Char('\n'));
     QVERIFY(passedArguments.contains(QStringLiteral("--tessdata-dir")));
     QVERIFY(passedArguments.contains(QFileInfo(runtimeData).canonicalFilePath()));
+#else
+    const TesseractOcrEngine engine;
+#endif
 
     const QString overrideData = directory.filePath(QStringLiteral("override-data"));
     QVERIFY(QDir().mkpath(overrideData));
