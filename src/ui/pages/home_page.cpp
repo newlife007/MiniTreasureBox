@@ -168,7 +168,7 @@ void HomePage::updateSearchMode()
 {
     const bool fileMode = searchMode_->currentData().toString() == QStringLiteral("files");
     search_->setPlaceholderText(fileMode
-                                    ? tr("搜索本地文件名、目录名或文件内容")
+                                    ? tr("搜索本地文件名或目录路径")
                                     : tr("搜索名称、分类、描述、关键词或别名"));
     search_->setAccessibleName(fileMode ? tr("本地文件搜索") : tr("全局工具搜索"));
     search_->setAccessibleDescription(

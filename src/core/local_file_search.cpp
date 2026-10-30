@@ -2,80 +2,71 @@
 
 #include <QDir>
 #include <QDirIterator>
-#include <QFile>
 #include <QFileInfo>
-#include <QStringDecoder>
+#include <QSet>
 
-#ifdef Q_OS_UNIX
-#include <sys/stat.h>
-#endif
+#include <algorithm>
 
 namespace mtb {
 namespace {
 
-bool isCancelled(const LocalFileSearchRequest& request)
+bool isCancelled(const std::shared_ptr<std::atomic_bool>& cancelled)
 {
-    return request.cancelled && request.cancelled->load(std::memory_order_relaxed);
+    return cancelled && cancelled->load(std::memory_order_relaxed);
 }
 
-bool hasReadPermission(const QFileInfo& info)
+bool isPathInside(const QString& rootPath, const QString& candidatePath)
 {
-#ifdef Q_OS_UNIX
-    struct stat status {};
-    const QByteArray encodedPath = QFile::encodeName(info.absoluteFilePath());
-    return ::stat(encodedPath.constData(), &status) == 0
-        && (status.st_mode & (S_IRUSR | S_IRGRP | S_IROTH));
-#else
-    constexpr auto readPermissions = QFileDevice::ReadOwner | QFileDevice::ReadUser
-        | QFileDevice::ReadGroup | QFileDevice::ReadOther;
-    return info.permissions() & readPermissions;
-#endif
+    const QString relative = QDir::fromNativeSeparators(
+        QDir(rootPath).relativeFilePath(candidatePath));
+    return relative == QStringLiteral(".")
+        || (!QDir::isAbsolutePath(relative) && relative != QStringLiteral("..")
+            && !relative.startsWith(QStringLiteral("../")));
 }
 
-bool contentMatches(const QFileInfo& info, const QString& query, qsizetype maximumBytes)
+bool isSameOrDescendant(const QString& parentPath, const QString& candidatePath)
 {
-    if (!info.isReadable() || !hasReadPermission(info)
-        || info.size() < 0 || info.size() > maximumBytes) {
-        return false;
-    }
-
-    QFile file(info.absoluteFilePath());
-    if (!file.open(QIODevice::ReadOnly)) {
-        return false;
-    }
-
-    const QByteArray bytes = file.read(maximumBytes + 1);
-    if (bytes.size() > maximumBytes || bytes.contains('\0')) {
-        return false;
-    }
-
-    QStringDecoder decoder(QStringDecoder::Utf8);
-    const QString text = decoder.decode(bytes);
-    return !decoder.hasError() && text.contains(query, Qt::CaseInsensitive);
+    return isPathInside(parentPath, candidatePath);
 }
 
-}  // namespace
-
-QList<LocalFileSearchResult> LocalFileSearch::search(const LocalFileSearchRequest& request)
+void appendRecord(LocalFileSearchIndex& index, const QFileInfo& info)
 {
-    QList<LocalFileSearchResult> results;
-    const QString query = request.query.trimmed();
-    const QString rootPath = QDir::cleanPath(request.rootPath);
-    const QFileInfo root(rootPath);
-    if (query.isEmpty() || request.resultLimit <= 0 || request.maximumContentBytes < 0
-        || !QDir::isAbsolutePath(rootPath) || !root.exists() || !root.isDir()
-        || root.isSymLink() || (!request.searchNames && !request.searchContents)
-        || isCancelled(request)) {
-        return results;
+    const bool isDirectory = info.isDir();
+    index.records.append({QDir::cleanPath(info.absoluteFilePath()),
+                          QDir::fromNativeSeparators(
+                              QDir(index.rootPath).relativeFilePath(
+                                  info.absoluteFilePath())),
+                          isDirectory});
+    if (isDirectory) {
+        ++index.stats.directoryCount;
+    } else {
+        ++index.stats.fileCount;
+    }
+}
+
+bool scanPath(LocalFileSearchIndex& index, const QString& scanPath, bool includeScanPath,
+              const std::shared_ptr<std::atomic_bool>& cancelled)
+{
+    const QFileInfo scanInfo(scanPath);
+    if (scanInfo.isSymLink() || (!scanInfo.isFile() && !scanInfo.isDir())) {
+        return true;
     }
 
-    QDirIterator iterator(rootPath,
+    if (includeScanPath) {
+        appendRecord(index, scanInfo);
+    }
+    if (!scanInfo.isDir()) {
+        return true;
+    }
+
+    index.watchedDirectories.append(QDir::cleanPath(scanInfo.absoluteFilePath()));
+    QDirIterator iterator(scanPath,
                           QDir::AllEntries | QDir::Hidden | QDir::System
                               | QDir::NoDotAndDotDot,
                           QDirIterator::Subdirectories);
-    while (iterator.hasNext() && results.size() < request.resultLimit) {
-        if (isCancelled(request)) {
-            break;
+    while (iterator.hasNext()) {
+        if (isCancelled(cancelled)) {
+            return false;
         }
 
         iterator.next();
@@ -83,14 +74,145 @@ QList<LocalFileSearchResult> LocalFileSearch::search(const LocalFileSearchReques
         if (info.isSymLink() || (!info.isFile() && !info.isDir())) {
             continue;
         }
+        appendRecord(index, info);
+        if (info.isDir()) {
+            index.watchedDirectories.append(
+                QDir::cleanPath(info.absoluteFilePath()));
+        }
+    }
+    return !isCancelled(cancelled);
+}
 
-        const bool nameMatched = request.searchNames
-            && info.fileName().contains(query, Qt::CaseInsensitive);
-        const bool contentMatched = request.searchContents && info.isFile()
-            && contentMatches(info, query, request.maximumContentBytes);
-        if (nameMatched || contentMatched) {
-            results.append({info.absoluteFilePath(), info.isDir(), nameMatched,
-                            contentMatched});
+void normalizeIndex(LocalFileSearchIndex& index)
+{
+    std::sort(index.records.begin(), index.records.end(),
+              [](const auto& left, const auto& right) {
+                  return left.relativePath.compare(right.relativePath,
+                                                   Qt::CaseInsensitive)
+                      < 0;
+              });
+    index.watchedDirectories.removeDuplicates();
+    std::sort(index.watchedDirectories.begin(), index.watchedDirectories.end(),
+              [](const QString& left, const QString& right) {
+                  return left.compare(right, Qt::CaseInsensitive) < 0;
+              });
+}
+
+LocalFileSearchIndexResult failure(const QString& message, bool cancelled = false)
+{
+    return {{}, false, cancelled, message};
+}
+
+}  // namespace
+
+LocalFileSearchIndexResult LocalFileSearch::buildIndex(
+    const QString& rootPath, const std::shared_ptr<std::atomic_bool>& cancelled)
+{
+    const QString normalized = QDir::cleanPath(rootPath);
+    const QFileInfo root(normalized);
+    if (!QDir::isAbsolutePath(normalized) || !root.exists() || !root.isDir()
+        || root.isSymLink()) {
+        return failure(QStringLiteral("The selected search root is invalid."));
+    }
+    if (isCancelled(cancelled)) {
+        return failure(QStringLiteral("Indexing was cancelled."), true);
+    }
+
+    LocalFileSearchIndex index;
+    index.rootPath = normalized;
+    if (!scanPath(index, normalized, false, cancelled)) {
+        return failure(QStringLiteral("Indexing was cancelled."), true);
+    }
+    normalizeIndex(index);
+    index.ready = true;
+    return {std::move(index), true, false, {}};
+}
+
+LocalFileSearchIndexResult LocalFileSearch::refreshSubtree(
+    const LocalFileSearchIndex& currentIndex, const QString& changedPath,
+    const std::shared_ptr<std::atomic_bool>& cancelled)
+{
+    if (!currentIndex.ready) {
+        return failure(QStringLiteral("The current index is not ready."));
+    }
+
+    const QFileInfo root(currentIndex.rootPath);
+    if (!root.exists() || !root.isDir() || root.isSymLink()) {
+        return failure(QStringLiteral("The indexed search root is no longer available."));
+    }
+
+    const QString normalized = QDir::cleanPath(changedPath);
+    if (!QDir::isAbsolutePath(normalized)
+        || !isPathInside(currentIndex.rootPath, normalized)) {
+        return failure(QStringLiteral("The changed path is outside the indexed root."));
+    }
+    if (isCancelled(cancelled)) {
+        return failure(QStringLiteral("Index update was cancelled."), true);
+    }
+
+    LocalFileSearchIndex updated = currentIndex;
+    updated.ready = false;
+    updated.records.erase(
+        std::remove_if(updated.records.begin(), updated.records.end(),
+                       [&normalized](const LocalFileSearchRecord& record) {
+                           return isSameOrDescendant(normalized, record.path);
+                       }),
+        updated.records.end());
+    updated.watchedDirectories.erase(
+        std::remove_if(updated.watchedDirectories.begin(),
+                       updated.watchedDirectories.end(),
+                       [&normalized](const QString& directory) {
+                           return isSameOrDescendant(normalized, directory);
+                       }),
+        updated.watchedDirectories.end());
+
+    updated.stats = {};
+    for (const LocalFileSearchRecord& record : updated.records) {
+        if (record.isDirectory) {
+            ++updated.stats.directoryCount;
+        } else {
+            ++updated.stats.fileCount;
+        }
+    }
+
+    const QFileInfo changed(normalized);
+    if (changed.exists() && !changed.isSymLink()
+        && (changed.isFile() || changed.isDir())) {
+        const bool includeChangedPath = normalized != currentIndex.rootPath;
+        if (!scanPath(updated, normalized, includeChangedPath, cancelled)) {
+            return failure(QStringLiteral("Index update was cancelled."), true);
+        }
+    } else if (normalized == currentIndex.rootPath) {
+        return failure(QStringLiteral("The indexed search root is no longer available."));
+    }
+
+    if (isCancelled(cancelled)) {
+        return failure(QStringLiteral("Index update was cancelled."), true);
+    }
+    normalizeIndex(updated);
+    updated.ready = true;
+    return {std::move(updated), true, false, {}};
+}
+
+QList<LocalFileSearchResult> LocalFileSearch::search(
+    const LocalFileSearchIndex& index, const QString& query, int resultLimit,
+    const std::shared_ptr<std::atomic_bool>& cancelled)
+{
+    QList<LocalFileSearchResult> results;
+    const QString normalizedQuery = query.trimmed();
+    const int boundedLimit = std::clamp(resultLimit, 0, DefaultResultLimit);
+    if (!index.ready || normalizedQuery.isEmpty() || boundedLimit == 0
+        || isCancelled(cancelled)) {
+        return results;
+    }
+
+    results.reserve(std::min<qsizetype>(boundedLimit, index.records.size()));
+    for (const LocalFileSearchRecord& record : index.records) {
+        if (isCancelled(cancelled) || results.size() >= boundedLimit) {
+            break;
+        }
+        if (record.relativePath.contains(normalizedQuery, Qt::CaseInsensitive)) {
+            results.append({record.path, record.isDirectory, true});
         }
     }
     return results;
