@@ -155,7 +155,12 @@ jobs:
           gh api "repos/${repository}/releases/${release_id}" > provenance/release.json
           gh api "repos/${repository}/releases/tags/v1.0.7" > provenance/release-by-tag.json
           jq -e --argjson release_id "$release_id" '
+            def expected_name:
+              . == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" or
+              . == "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg" or
+              . == "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg";
             def valid_expected_asset:
+              (.state == "starter" and (.name | expected_name)) or
               (.name == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" and
                 .size == 151473933 and .state == "uploaded" and
                 .digest == "sha256:5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e") or
@@ -177,7 +182,9 @@ jobs:
             .id == $release_id and .tag_name == "v1.0.7"
           ' provenance/release-by-tag.json > /dev/null
 
-          if [[ "$(jq -r '.assets | length == 3' provenance/release.json)" == "true" ]]; then
+          if [[ "$(jq -r '
+            (.assets | length == 3) and all(.assets[]; .state == "uploaded")
+          ' provenance/release.json)" == "true" ]]; then
             echo 'release_complete=true' >> "$GITHUB_OUTPUT"
           else
             echo 'release_complete=false' >> "$GITHUB_OUTPUT"
