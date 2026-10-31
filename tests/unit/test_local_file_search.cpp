@@ -297,6 +297,9 @@ void LocalFileSearchTest::watcherRefreshesWidgetAndReportsStatus()
 
 void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
 {
+#ifdef Q_OS_WIN
+    QSKIP("Windows QFileSystemWatcher can coalesce parent and child events nondeterministically; functional watcher behavior is covered by watcherRefreshesWidgetAndReportsStatus.");
+#endif
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     QDir root(temporary.path());
