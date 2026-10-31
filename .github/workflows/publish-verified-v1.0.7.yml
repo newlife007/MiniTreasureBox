@@ -1,0 +1,357 @@
+name: Publish verified v1.0.7 installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Exact verified build workflow run ID
+        required: true
+        type: string
+      confirmation:
+        description: Type publish-v1.0.7-from-run-41223527369 to confirm
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-verified-v1.0.7
+  cancel-in-progress: false
+
+jobs:
+  publish-verified-v1-0-7:
+    name: Publish verified v1.0.7 installers
+    if: >-
+      github.repository == 'newlife007/MiniTreasureBox' &&
+      github.ref == 'refs/heads/main' &&
+      inputs.source_run_id == '41223527369' &&
+      inputs.confirmation == 'publish-v1.0.7-from-run-41223527369'
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Verify fixed release provenance before download
+        id: preflight
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readonly repository='newlife007/MiniTreasureBox'
+          readonly source_run='41223527369'
+          readonly build_commit='d73a3c85983ad5ac8ae0fe667467c96737bc2833'
+          readonly runner_fix_commit='d8cb6fc6ab5ccb20d61e7a23eb969a067ec18373'
+          readonly tag_object='27c150b59a6d502d85cba669be99d3b140e4f5c2'
+          readonly tag_target='afb04c14884d0ce7c590d3905ea877015035e069'
+          readonly release_id='430084987'
+
+          mkdir -p provenance
+          gh api "repos/${repository}/pulls/33" > provenance/pull.json
+          jq -e --arg repository "$repository" \
+            --arg build_commit "$build_commit" \
+            --arg runner_fix_commit "$runner_fix_commit" '
+              .number == 33 and
+              .state == "closed" and
+              .merged == true and
+              .base.ref == "main" and
+              .base.repo.full_name == $repository and
+              .head.ref == "fix/release-1.0.7-macos-runner" and
+              .head.repo.full_name == $repository and
+              .head.sha == $runner_fix_commit and
+              .merge_commit_sha == $build_commit and
+              (.merged_at | type == "string")
+            ' provenance/pull.json > /dev/null
+
+          gh api "repos/${repository}/actions/runs/${source_run}" > provenance/run.json
+          jq -e --arg repository "$repository" \
+            --arg source_run "$source_run" \
+            --arg build_commit "$build_commit" '
+              (.id | tostring) == $source_run and
+              .repository.full_name == $repository and
+              .event == "workflow_dispatch" and
+              .status == "completed" and
+              .conclusion == "success" and
+              .head_branch == "main" and
+              .head_sha == $build_commit and
+              .path == ".github/workflows/release.yml"
+            ' provenance/run.json > /dev/null
+
+          gh api "repos/${repository}/actions/runs/${source_run}/jobs?per_page=100" \
+            > provenance/jobs.json
+          # This is the hosted-runner evidence required by the runner-fix review.
+          # Bind every job record to the corrected run and commit before accepting it.
+          jq -e --argjson source_run "$source_run" --arg build_commit "$build_commit" '
+            def exact_job($name; $conclusion):
+              [.jobs[] |
+                select(
+                  .run_id == $source_run and
+                  .head_sha == $build_commit and
+                  .name == $name and
+                  .status == "completed" and
+                  .conclusion == $conclusion
+                )
+              ] | length == 1;
+            (.total_count == 5) and
+            exact_job("Validate release version"; "success") and
+            exact_job("Package Windows installer"; "success") and
+            exact_job("Package macOS disk image (x86_64)"; "success") and
+            exact_job("Package macOS disk image (arm64)"; "success") and
+            exact_job("Publish unsigned preview release"; "skipped") and
+            ([.jobs[] |
+              select(
+                .run_id == $source_run and
+                .head_sha == $build_commit and
+                .name == "Package macOS disk image (arm64)" and
+                (.labels | index("macos-15")) != null and
+                (.runner_id | type == "number") and .runner_id > 0 and
+                (.runner_name | type == "string") and (.runner_name | length) > 0 and
+                ([.steps[] |
+                  select(
+                    .name == "Require the selected native architecture" and
+                    .status == "completed" and
+                    .conclusion == "success"
+                  )] | length == 1)
+              )
+            ] | length == 1)
+          ' provenance/jobs.json > /dev/null
+
+          gh api "repos/${repository}/actions/runs/${source_run}/artifacts?per_page=100" \
+            > provenance/artifacts.json
+          jq -e --arg source_run "$source_run" --arg build_commit "$build_commit" '
+            def exact_artifact($id; $name; $size):
+              [.artifacts[] |
+                select(
+                  .id == $id and
+                  .name == $name and
+                  .size_in_bytes == $size and
+                  .expired == false and
+                  (.workflow_run.id | tostring) == $source_run and
+                  .workflow_run.head_branch == "main" and
+                  .workflow_run.head_sha == $build_commit
+                )
+              ] | length == 1;
+            .total_count == 3 and
+            (.artifacts | length == 3) and
+            exact_artifact(13051046401; "MiniTreasureBox-windows-unsigned-preview"; 151058230) and
+            exact_artifact(13051916498; "MiniTreasureBox-macos-x64-unsigned-preview"; 259690536) and
+            exact_artifact(13051850232; "MiniTreasureBox-macos-arm64-unsigned-preview"; 238454864)
+          ' provenance/artifacts.json > /dev/null
+
+          gh api "repos/${repository}/git/ref/tags/v1.0.7" > provenance/tag-ref.json
+          jq -e --arg tag_object "$tag_object" '
+            .ref == "refs/tags/v1.0.7" and
+            .object.type == "tag" and
+            .object.sha == $tag_object
+          ' provenance/tag-ref.json > /dev/null
+          gh api "repos/${repository}/git/tags/${tag_object}" > provenance/tag-object.json
+          jq -e --arg tag_target "$tag_target" '
+            .tag == "v1.0.7" and
+            .object.type == "commit" and
+            .object.sha == $tag_target
+          ' provenance/tag-object.json > /dev/null
+
+          gh api "repos/${repository}/releases/${release_id}" > provenance/release.json
+          gh api "repos/${repository}/releases/tags/v1.0.7" > provenance/release-by-tag.json
+          jq -e --argjson release_id "$release_id" '
+            def expected_name:
+              . == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" or
+              . == "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg" or
+              . == "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg";
+            def valid_expected_asset:
+              (.state == "starter" and (.name | expected_name)) or
+              (.name == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" and
+                .size == 151473933 and .state == "uploaded" and
+                .digest == "sha256:5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e") or
+              (.name == "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg" and
+                .size == 260791837 and .state == "uploaded" and
+                .digest == "sha256:3bb3d08694c4ae32034208d4d6bd44750d5edbf2602fd3174afeb2df5ff23817") or
+              (.name == "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg" and
+                .size == 239416853 and .state == "uploaded" and
+                .digest == "sha256:a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d");
+            .id == $release_id and
+            .tag_name == "v1.0.7" and
+            .draft == false and
+            .prerelease == true and
+            (.assets | length <= 3) and
+            all(.assets[]; valid_expected_asset) and
+            (([.assets[].name] | unique | length) == (.assets | length))
+          ' provenance/release.json > /dev/null
+          jq -e --argjson release_id "$release_id" '
+            .id == $release_id and .tag_name == "v1.0.7"
+          ' provenance/release-by-tag.json > /dev/null
+
+          if [[ "$(jq -r '
+            (.assets | length == 3) and all(.assets[]; .state == "uploaded")
+          ' provenance/release.json)" == "true" ]]; then
+            echo 'release_complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'release_complete=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download exact verified Windows artifact
+        if: steps.preflight.outputs.release_complete != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MiniTreasureBox-windows-unsigned-preview
+          path: installers/windows
+          github-token: ${{ github.token }}
+          repository: newlife007/MiniTreasureBox
+          run-id: 41223527369
+      - name: Download exact verified macOS x64 artifact
+        if: steps.preflight.outputs.release_complete != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MiniTreasureBox-macos-x64-unsigned-preview
+          path: installers/macos-x64
+          github-token: ${{ github.token }}
+          repository: newlife007/MiniTreasureBox
+          run-id: 41223527369
+      - name: Download exact verified macOS arm64 artifact
+        if: steps.preflight.outputs.release_complete != 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: MiniTreasureBox-macos-arm64-unsigned-preview
+          path: installers/macos-arm64
+          github-token: ${{ github.token }}
+          repository: newlife007/MiniTreasureBox
+          run-id: 41223527369
+
+      - name: Verify exact downloaded files
+        if: steps.preflight.outputs.release_complete != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          readonly windows='installers/windows/MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe'
+          readonly macos_x64='installers/macos-x64/MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg'
+          readonly macos_arm64='installers/macos-arm64/MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg'
+
+          mapfile -d '' downloaded_files < <(find installers -type f -print0)
+          if [[ "${#downloaded_files[@]}" -ne 3 ]]; then
+            printf 'Expected exactly three downloaded files, found %s.\n' \
+              "${#downloaded_files[@]}" >&2
+            exit 1
+          fi
+          if find installers -type l -print -quit | grep -q .; then
+            echo 'Downloaded artifacts must not contain symbolic links.' >&2
+            exit 1
+          fi
+          for expected_file in "$windows" "$macos_x64" "$macos_arm64"; do
+            if [[ ! -f "$expected_file" ]]; then
+              echo "Expected artifact file is missing: $expected_file" >&2
+              exit 1
+            fi
+          done
+
+          verify_file() {
+            local path="$1"
+            local expected_size="$2"
+            local expected_sha256="$3"
+            local actual_size
+            local actual_sha256
+            actual_size="$(stat --format='%s' "$path")"
+            actual_sha256="$(sha256sum "$path" | cut -d ' ' -f 1)"
+            if [[ "$actual_size" != "$expected_size" ]]; then
+              echo "Unexpected size for $path: $actual_size" >&2
+              exit 1
+            fi
+            if [[ "$actual_sha256" != "$expected_sha256" ]]; then
+              echo "Unexpected SHA-256 for $path: $actual_sha256" >&2
+              exit 1
+            fi
+          }
+
+          verify_file "$windows" 151473933 \
+            5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e
+          verify_file "$macos_x64" 260791837 \
+            3bb3d08694c4ae32034208d4d6bd44750d5edbf2602fd3174afeb2df5ff23817
+          verify_file "$macos_arm64" 239416853 \
+            a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d
+
+      - name: Attach verified unsigned installers to existing prerelease
+        if: steps.preflight.outputs.release_complete != 'true'
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
+        with:
+          tag_name: v1.0.7
+          name: MiniTreasureBox v1.0.7 unsigned preview
+          body: |
+            These installers are unsigned previews and are not code-signed. Windows may show an unknown publisher warning, and macOS Gatekeeper may block the app.
+
+            All three installers came from verified workflow run 41223527369 at corrected main commit d73a3c85983ad5ac8ae0fe667467c96737bc2833. No packages were rebuilt or mixed during publication.
+
+            The existing immutable annotated v1.0.7 tag remains at commit afb04c14884d0ce7c590d3905ea877015035e069.
+          prerelease: true
+          files: |
+            installers/windows/MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe
+            installers/macos-x64/MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg
+            installers/macos-arm64/MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg
+          fail_on_unmatched_files: true
+          make_latest: false
+
+      - name: Verify published release and immutable tag
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          readonly repository='newlife007/MiniTreasureBox'
+          readonly release_id='430084987'
+          readonly tag_object='27c150b59a6d502d85cba669be99d3b140e4f5c2'
+          readonly tag_target='afb04c14884d0ce7c590d3905ea877015035e069'
+
+          gh api "repos/${repository}/releases/${release_id}" > published-release.json
+          gh api "repos/${repository}/releases/tags/v1.0.7" > published-release-by-tag.json
+          jq -e --argjson release_id "$release_id" '
+            def exact_asset($name; $size; $digest):
+              [.assets[] |
+                select(
+                  .name == $name and
+                  .size == $size and
+                  .size > 0 and
+                  .state == "uploaded" and
+                  .digest == $digest
+                )
+              ] | length == 1;
+            .id == $release_id and
+            .tag_name == "v1.0.7" and
+            .name == "MiniTreasureBox v1.0.7 unsigned preview" and
+            .draft == false and
+            .prerelease == true and
+            (.assets | length == 3) and
+            (.body | contains("unsigned previews")) and
+            (.body | contains("workflow run 41223527369")) and
+            (.body | contains("d73a3c85983ad5ac8ae0fe667467c96737bc2833")) and
+            (.body | contains("afb04c14884d0ce7c590d3905ea877015035e069")) and
+            exact_asset(
+              "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe";
+              151473933;
+              "sha256:5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e"
+            ) and
+            exact_asset(
+              "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg";
+              260791837;
+              "sha256:3bb3d08694c4ae32034208d4d6bd44750d5edbf2602fd3174afeb2df5ff23817"
+            ) and
+            exact_asset(
+              "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg";
+              239416853;
+              "sha256:a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d"
+            )
+          ' published-release.json > /dev/null
+          jq -e --argjson release_id "$release_id" '
+            .id == $release_id and .tag_name == "v1.0.7"
+          ' published-release-by-tag.json > /dev/null
+
+          gh api "repos/${repository}/git/ref/tags/v1.0.7" > published-tag-ref.json
+          jq -e --arg tag_object "$tag_object" '
+            .ref == "refs/tags/v1.0.7" and
+            .object.type == "tag" and
+            .object.sha == $tag_object
+          ' published-tag-ref.json > /dev/null
+          gh api "repos/${repository}/git/tags/${tag_object}" > published-tag-object.json
+          jq -e --arg tag_target "$tag_target" '
+            .tag == "v1.0.7" and
+            .object.type == "commit" and
+            .object.sha == $tag_target
+          ' published-tag-object.json > /dev/null
