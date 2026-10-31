@@ -215,7 +215,6 @@ void LocalFileSearchWidget::beginIndexBuild()
     updateTimer_->stop();
     indexUpdateInProgress_ = false;
     pendingChangedPaths_.clear();
-    activeUpdatePaths_.clear();
     if (!fileWatcher_->directories().isEmpty()) {
         fileWatcher_->removePaths(fileWatcher_->directories());
     }
@@ -310,24 +309,7 @@ void LocalFileSearchWidget::queueChangedPath(const QString& path)
     if (!index_.ready || path.isEmpty()) {
         return;
     }
-    const QString normalized = QDir::cleanPath(path);
-    if (indexUpdateInProgress_
-        && std::any_of(activeUpdatePaths_.cbegin(), activeUpdatePaths_.cend(),
-                       [&normalized](const QString& activePath) {
-                           const QString relative = QDir::fromNativeSeparators(
-                               QDir(activePath).relativeFilePath(normalized));
-                           return relative == QStringLiteral(".")
-                               || (!QDir::isAbsolutePath(relative)
-                                   && relative != QStringLiteral("..")
-                                   && !relative.startsWith(QStringLiteral("../")));
-                       })) {
-        // QFileSystemWatcher can deliver the same directory event after the
-        // corresponding refresh has already started. The refresh scans the
-        // active subtree itself, so queuing that late duplicate would cause a
-        // redundant overlapping update.
-        return;
-    }
-    pendingChangedPaths_.insert(normalized);
+    pendingChangedPaths_.insert(QDir::cleanPath(path));
     updateTimer_->start();
 }
 
@@ -366,13 +348,12 @@ void LocalFileSearchWidget::applyPendingUpdates()
     }
     debounceTimer_->stop();
     status_->setText(tr("正在后台更新文件索引…"));
-    activeUpdatePaths_ = coalesced;
     indexUpdateInProgress_ = true;
     indexCancellation_ = std::make_shared<std::atomic_bool>(false);
 
     auto* watcher = new QFutureWatcher<LocalFileSearchIndexResult>(this);
     connect(watcher, &QFutureWatcher<LocalFileSearchIndexResult>::finished, this,
-            [this, watcher, generation, coalesced] {
+            [this, watcher, generation] {
                 const LocalFileSearchIndexResult result = watcher->result();
                 watcher->deleteLater();
                 if (generation != indexGeneration_) {
@@ -380,7 +361,6 @@ void LocalFileSearchWidget::applyPendingUpdates()
                 }
                 indexCancellation_.reset();
                 indexUpdateInProgress_ = false;
-                activeUpdatePaths_.clear();
                 if (!result.success) {
                     index_.ready = false;
                     pendingChangedPaths_.clear();
@@ -388,23 +368,6 @@ void LocalFileSearchWidget::applyPendingUpdates()
                     status_->setText(tr("文件索引更新失败，请使用“重建索引”重新扫描。"));
                     emit indexStateChanged();
                     return;
-                }
-                for (auto pending = pendingChangedPaths_.begin();
-                     pending != pendingChangedPaths_.end();) {
-                    const bool alreadyRefreshed = std::any_of(
-                        coalesced.cbegin(), coalesced.cend(), [&pending](const QString& activePath) {
-                            const QString relative = QDir::fromNativeSeparators(
-                                QDir(activePath).relativeFilePath(*pending));
-                            return relative == QStringLiteral(".")
-                                || (!QDir::isAbsolutePath(relative)
-                                    && relative != QStringLiteral("..")
-                                    && !relative.startsWith(QStringLiteral("../")));
-                        });
-                    if (alreadyRefreshed) {
-                        pending = pendingChangedPaths_.erase(pending);
-                    } else {
-                        ++pending;
-                    }
                 }
                 index_ = result.index;
                 const bool addedDirectoryWatches = configureWatcher();
