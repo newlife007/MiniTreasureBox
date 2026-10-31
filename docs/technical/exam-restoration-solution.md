@@ -70,7 +70,7 @@
 
 ### 4.2 官方指标只能作为背景
 
-Paddle 文档报告 [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/main/en/version3.x/module_usage/doc_img_orientation_classification.html) Top-1 为 99.06%、模型约 7 MB；[UVDoc](https://www.paddleocr.ai/main/en/version3.x/module_usage/doc_unwarping.html) CER 为 0.179、模型约 30.3 MB。这些数字来自 Paddle 的数据、硬件和评测环境，不是 MiniTreasureBox 在真实试卷照片上的实测结果，也不能替代本方案的门禁。
+Paddle 文档报告 [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/main/en/version3.x/module_usage/doc_img_orientation_classification.html) Top-1 为 99.06%、模型约 7 MB；[UVDoc](https://www.paddleocr.ai/main/en/version3.x/module_usage/text_image_unwarping.html) CER 为 0.179、模型约 30.3 MB。这些数字来自 Paddle 的数据、硬件和评测环境，不是 MiniTreasureBox 在真实试卷照片上的实测结果，也不能替代本方案的门禁。
 
 ### 4.3 选型建议
 
