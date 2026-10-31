@@ -29,9 +29,11 @@ jobs:
       inputs.confirmation == 'publish-v1.0.7-from-run-41223527369'
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: write
     steps:
       - name: Verify fixed release provenance before download
+        id: preflight
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -153,17 +155,33 @@ jobs:
           gh api "repos/${repository}/releases/${release_id}" > provenance/release.json
           gh api "repos/${repository}/releases/tags/v1.0.7" > provenance/release-by-tag.json
           jq -e --argjson release_id "$release_id" '
+            def valid_expected_asset:
+              (.name == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" and
+                .size == 151473933 and .state == "uploaded") or
+              (.name == "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg" and
+                .size == 260791837 and .state == "uploaded") or
+              (.name == "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg" and
+                .size == 239416853 and .state == "uploaded");
             .id == $release_id and
             .tag_name == "v1.0.7" and
             .draft == false and
             .prerelease == true and
-            (.assets | length == 0)
+            (.assets | length <= 3) and
+            all(.assets[]; valid_expected_asset) and
+            (([.assets[].name] | unique | length) == (.assets | length))
           ' provenance/release.json > /dev/null
           jq -e --argjson release_id "$release_id" '
             .id == $release_id and .tag_name == "v1.0.7"
           ' provenance/release-by-tag.json > /dev/null
 
+          if [[ "$(jq -r '.assets | length == 3' provenance/release.json)" == "true" ]]; then
+            echo 'release_complete=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'release_complete=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Download exact verified Windows artifact
+        if: steps.preflight.outputs.release_complete != 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: MiniTreasureBox-windows-unsigned-preview
@@ -172,6 +190,7 @@ jobs:
           repository: newlife007/MiniTreasureBox
           run-id: 41223527369
       - name: Download exact verified macOS x64 artifact
+        if: steps.preflight.outputs.release_complete != 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: MiniTreasureBox-macos-x64-unsigned-preview
@@ -180,6 +199,7 @@ jobs:
           repository: newlife007/MiniTreasureBox
           run-id: 41223527369
       - name: Download exact verified macOS arm64 artifact
+        if: steps.preflight.outputs.release_complete != 'true'
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: MiniTreasureBox-macos-arm64-unsigned-preview
@@ -189,6 +209,7 @@ jobs:
           run-id: 41223527369
 
       - name: Verify exact downloaded files
+        if: steps.preflight.outputs.release_complete != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -239,6 +260,7 @@ jobs:
             a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d
 
       - name: Attach verified unsigned installers to existing prerelease
+        if: steps.preflight.outputs.release_complete != 'true'
         uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8 # v2.3.2
         with:
           tag_name: v1.0.7
@@ -255,6 +277,7 @@ jobs:
             installers/macos-x64/MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg
             installers/macos-arm64/MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg
           fail_on_unmatched_files: true
+          overwrite_files: true
           make_latest: false
 
       - name: Verify published release and immutable tag
