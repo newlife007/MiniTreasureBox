@@ -75,6 +75,7 @@ cmake --build build-package --config Release --parallel
 
 - [产品文档](docs/product/product-requirements.md)
 - [技术文档](docs/technical/technical-design.md)
+- [试卷照片自动还原方案](docs/technical/exam-restoration-solution.md)
 - [整体 UI 设计方案](docs/design/ui-design-plan.md)
 - [非游戏小工具 UI 设计规范](docs/design/tool-ui-style-guide.md)
 - [小游戏 UI 设计规范](docs/design/game-ui-style-guide.md)
