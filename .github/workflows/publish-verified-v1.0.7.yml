@@ -157,11 +157,14 @@ jobs:
           jq -e --argjson release_id "$release_id" '
             def valid_expected_asset:
               (.name == "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe" and
-                .size == 151473933 and .state == "uploaded") or
+                .size == 151473933 and .state == "uploaded" and
+                .digest == "sha256:5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e") or
               (.name == "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg" and
-                .size == 260791837 and .state == "uploaded") or
+                .size == 260791837 and .state == "uploaded" and
+                .digest == "sha256:3bb3d08694c4ae32034208d4d6bd44750d5edbf2602fd3174afeb2df5ff23817") or
               (.name == "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg" and
-                .size == 239416853 and .state == "uploaded");
+                .size == 239416853 and .state == "uploaded" and
+                .digest == "sha256:a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d");
             .id == $release_id and
             .tag_name == "v1.0.7" and
             .draft == false and
@@ -277,7 +280,6 @@ jobs:
             installers/macos-x64/MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg
             installers/macos-arm64/MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg
           fail_on_unmatched_files: true
-          overwrite_files: true
           make_latest: false
 
       - name: Verify published release and immutable tag
@@ -294,13 +296,14 @@ jobs:
           gh api "repos/${repository}/releases/${release_id}" > published-release.json
           gh api "repos/${repository}/releases/tags/v1.0.7" > published-release-by-tag.json
           jq -e --argjson release_id "$release_id" '
-            def exact_asset($name; $size):
+            def exact_asset($name; $size; $digest):
               [.assets[] |
                 select(
                   .name == $name and
                   .size == $size and
                   .size > 0 and
-                  .state == "uploaded"
+                  .state == "uploaded" and
+                  .digest == $digest
                 )
               ] | length == 1;
             .id == $release_id and
@@ -313,9 +316,21 @@ jobs:
             (.body | contains("workflow run 41223527369")) and
             (.body | contains("d73a3c85983ad5ac8ae0fe667467c96737bc2833")) and
             (.body | contains("afb04c14884d0ce7c590d3905ea877015035e069")) and
-            exact_asset("MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe"; 151473933) and
-            exact_asset("MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg"; 260791837) and
-            exact_asset("MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg"; 239416853)
+            exact_asset(
+              "MiniTreasureBox-1.0.7-windows-x64-unsigned-preview.exe";
+              151473933;
+              "sha256:5d7a90ca8a4508aa1c573da2577930186f3a9d63252d150f3da870fd5de23e1e"
+            ) and
+            exact_asset(
+              "MiniTreasureBox-1.0.7-macos-x64-unsigned-preview.dmg";
+              260791837;
+              "sha256:3bb3d08694c4ae32034208d4d6bd44750d5edbf2602fd3174afeb2df5ff23817"
+            ) and
+            exact_asset(
+              "MiniTreasureBox-1.0.7-macos-arm64-unsigned-preview.dmg";
+              239416853;
+              "sha256:a7780be64e2b09dd981eafe4431cee35368b9b4bfa313b8174ee64e235f1959d"
+            )
           ' published-release.json > /dev/null
           jq -e --argjson release_id "$release_id" '
             .id == $release_id and .tag_name == "v1.0.7"
