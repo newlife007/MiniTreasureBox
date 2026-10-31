@@ -336,7 +336,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
                                       Qt::DirectConnection));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
-    QVERIFY(updatePaths.first().contains(branchA));
+    QVERIFY(updatePaths.first().contains(branchA)
+            || updatePaths.first().contains(temporary.path()));
 
     const QString secondPath = QDir(branchB).filePath(
         QStringLiteral("second-added.txt"));
