@@ -143,11 +143,17 @@ void report(const RestorationRequest& request, ProcessingStage stage, int percen
 void stopProcess(QProcess& process)
 {
     if (process.state() == QProcess::NotRunning) return;
+#ifdef Q_OS_WIN
+    // QProcess::terminate() cannot stop console workers without a WM_CLOSE-aware event loop.
+    process.kill();
+    process.waitForFinished(kTerminationWaitMs);
+#else
     process.terminate();
     if (!process.waitForFinished(kTerminationWaitMs)) {
         process.kill();
         process.waitForFinished(kTerminationWaitMs);
     }
+#endif
 }
 
 struct ProcessResult {
