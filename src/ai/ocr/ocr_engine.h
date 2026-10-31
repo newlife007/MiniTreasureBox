@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QByteArray>
 #include <QString>
 #include <QStringList>
 
@@ -12,8 +13,9 @@ enum class OcrError {
     InvalidInput,
     UnsupportedImage,
     RuntimeMissing,
-    LanguageDataMissing,
+    ModelDataMissing,
     ProcessFailed,
+    ProtocolError,
     TimedOut,
     Cancelled,
     EmptyOutput,
@@ -21,10 +23,10 @@ enum class OcrError {
 
 struct OcrRequest {
     QString imagePath;
-    QString executable;
-    QString tessdataPath;
-    QString language{QStringLiteral("chi_sim+eng")};
-    int timeoutMs{60000};
+    QString workerExecutable;
+    QString modelPath;
+    QString language{QStringLiteral("ch")};
+    int timeoutMs{120000};
 };
 
 struct OcrResult {
@@ -42,7 +44,7 @@ public:
         const std::atomic_bool* cancellation = nullptr) const = 0;
 };
 
-class TesseractOcrEngine final : public IOcrEngine {
+class PaddleOcrEngine final : public IOcrEngine {
 public:
     [[nodiscard]] OcrResult recognize(
         const OcrRequest& request,
@@ -53,6 +55,7 @@ public:
         const QString& applicationDirPath = {});
     [[nodiscard]] static OcrResult validate(const OcrRequest& request);
     [[nodiscard]] static QStringList argumentsFor(const OcrRequest& request);
+    [[nodiscard]] static OcrResult parseResponse(const QByteArray& output);
 };
 
 }  // namespace mtb::ocr

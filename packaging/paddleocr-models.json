@@ -1,0 +1,12 @@
+{
+  "PP-OCRv5_mobile_det_onnx": {
+    "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_det_onnx_infer.tar",
+    "sha256": "781056046c9ed77a15c94681605db6a0f62317c2e9cce6931c71da2478d4bc30",
+    "archiveRoot": "PP-OCRv5_mobile_det_onnx_infer"
+  },
+  "PP-OCRv5_mobile_rec_onnx": {
+    "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv5_mobile_rec_onnx_infer.tar",
+    "sha256": "f7e792bc836f36e7ef895ad47c426d75b0b75b1650caa6d63fe9418441ffba8c",
+    "archiveRoot": "PP-OCRv5_mobile_rec_onnx_infer"
+  }
+}

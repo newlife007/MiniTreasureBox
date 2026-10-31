@@ -62,6 +62,12 @@ add_library(minitreasurebox_foundation STATIC
     src/ui/widgets/tool_card.h
     src/ui/widgets/tool_grid.cpp
     src/ui/widgets/tool_grid.h
+    src/ui/widgets/tool_workspace/metric_card.cpp
+    src/ui/widgets/tool_workspace/metric_card.h
+    src/ui/widgets/tool_workspace/responsive_pair.cpp
+    src/ui/widgets/tool_workspace/responsive_pair.h
+    src/ui/widgets/tool_workspace/tool_status_strip.cpp
+    src/ui/widgets/tool_workspace/tool_status_strip.h
     resources/game_audio.qrc
 )
 
@@ -91,16 +97,6 @@ endif()
 include(CTest)
 if(BUILD_TESTING)
     find_package(Qt6 REQUIRED COMPONENTS Test)
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
-    add_test(NAME ocr_runtime_fetch
-        COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_SOURCE_DIR}/tests/unit/test_fetch_ocr_runtime.py"
-                "${CMAKE_SOURCE_DIR}/scripts/fetch_ocr_runtime.py")
-    add_test(NAME ocr_runtime_staging
-        COMMAND "${Python3_EXECUTABLE}"
-                "${CMAKE_SOURCE_DIR}/tests/unit/test_stage_ocr_runtime.py"
-                "${CMAKE_SOURCE_DIR}/scripts/stage_ocr_runtime.py")
 
     add_executable(test_tool_registry tests/unit/test_tool_registry.cpp)
     target_link_libraries(test_tool_registry PRIVATE minitreasurebox_foundation Qt6::Test)
@@ -130,23 +126,25 @@ if(BUILD_TESTING)
     target_link_libraries(test_game_widgets PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME game_widgets COMMAND test_game_widgets)
 
-    add_executable(fake_tesseract tests/fixtures/fake_tesseract.cpp)
+    add_executable(fake_paddleocr_worker tests/fixtures/fake_paddleocr_worker.cpp)
     if(MSVC)
-        set_property(TARGET fake_tesseract PROPERTY
+        set_property(TARGET fake_paddleocr_worker PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endif()
 
-    add_executable(ocr_runtime_smoke tests/fixtures/ocr_runtime_smoke.cpp)
+    add_executable(ocr_runtime_smoke
+        tests/fixtures/ocr_runtime_smoke.cpp
+        tests/fixtures/ocr_runtime_smoke.qrc)
     target_link_libraries(ocr_runtime_smoke PRIVATE minitreasurebox_foundation)
 
     add_executable(test_ocr_engine tests/unit/test_ocr_engine.cpp)
     target_link_libraries(test_ocr_engine PRIVATE minitreasurebox_foundation Qt6::Test)
-    add_dependencies(test_ocr_engine fake_tesseract)
+    add_dependencies(test_ocr_engine fake_paddleocr_worker)
     add_test(NAME ocr_engine COMMAND test_ocr_engine)
 
     add_executable(test_ocr_widget tests/unit/test_ocr_widget.cpp)
     target_link_libraries(test_ocr_widget PRIVATE minitreasurebox_foundation Qt6::Test)
-    add_dependencies(test_ocr_widget fake_tesseract)
+    add_dependencies(test_ocr_widget fake_paddleocr_worker)
     add_test(NAME ocr_widget COMMAND test_ocr_widget)
 
     add_executable(test_removal_engine tests/unit/test_removal_engine.cpp)
@@ -171,50 +169,38 @@ endif()
 include(GNUInstallDirs)
 
 set(MINITREASUREBOX_OCR_RUNTIME_ROOT "" CACHE PATH
-    "Path to a staged, relocatable Tesseract runtime")
+    "Path to a staged, relocatable PaddleOCR worker runtime")
 option(MINITREASUREBOX_REQUIRE_BUNDLED_OCR
-    "Fail configuration unless a complete bundled OCR runtime is staged" OFF)
+    "Fail configuration unless a complete bundled PaddleOCR runtime is staged" OFF)
 
 set(_mtb_ocr_runtime_ready FALSE)
 if(MINITREASUREBOX_OCR_RUNTIME_ROOT)
     get_filename_component(_mtb_ocr_root
         "${MINITREASUREBOX_OCR_RUNTIME_ROOT}" ABSOLUTE)
     if(WIN32)
-        set(_mtb_ocr_executable_candidates
-            "${_mtb_ocr_root}/Library/bin/tesseract.exe"
-            "${_mtb_ocr_root}/bin/tesseract.exe")
-        file(GLOB _mtb_ocr_runtime_libraries
-            "${_mtb_ocr_root}/Library/bin/*.dll"
-            "${_mtb_ocr_root}/bin/*.dll")
-    elseif(APPLE)
-        set(_mtb_ocr_executable_candidates "${_mtb_ocr_root}/bin/tesseract")
-        file(GLOB _mtb_ocr_runtime_libraries "${_mtb_ocr_root}/lib/*.dylib")
+        set(_mtb_ocr_worker "${_mtb_ocr_root}/bin/paddleocr-worker.exe")
+    else()
+        set(_mtb_ocr_worker "${_mtb_ocr_root}/bin/paddleocr-worker")
     endif()
-
-    set(_mtb_ocr_executable "")
-    foreach(_candidate IN LISTS _mtb_ocr_executable_candidates)
-        if(EXISTS "${_candidate}")
-            set(_mtb_ocr_executable "${_candidate}")
-            break()
-        endif()
-    endforeach()
-    if((WIN32 OR APPLE) AND NOT _mtb_ocr_executable)
+    if(NOT EXISTS "${_mtb_ocr_worker}")
         message(FATAL_ERROR
-            "The staged OCR runtime has no Tesseract executable: ${_mtb_ocr_root}")
+            "The staged OCR runtime has no PaddleOCR worker: ${_mtb_ocr_root}")
     endif()
-    if((WIN32 OR APPLE) AND NOT _mtb_ocr_runtime_libraries)
+    if(NOT IS_DIRECTORY "${_mtb_ocr_root}/bin/_internal")
         message(FATAL_ERROR
-            "The staged OCR runtime has no transitive runtime libraries: ${_mtb_ocr_root}")
+            "The staged PaddleOCR worker has no bundled Python dependencies")
     endif()
-    foreach(_language eng chi_sim)
-        if(NOT EXISTS "${_mtb_ocr_root}/share/tessdata/${_language}.traineddata")
-            message(FATAL_ERROR
-                "The staged OCR runtime is missing ${_language}.traineddata")
-        endif()
+    foreach(_model PP-OCRv5_mobile_det_onnx PP-OCRv5_mobile_rec_onnx)
+        foreach(_model_file inference.onnx inference.yml)
+            if(NOT EXISTS "${_mtb_ocr_root}/models/${_model}/${_model_file}")
+                message(FATAL_ERROR
+                    "The staged PaddleOCR runtime is missing ${_model}/${_model_file}")
+            endif()
+        endforeach()
     endforeach()
     if(NOT EXISTS "${_mtb_ocr_root}/licenses/THIRD_PARTY_MANIFEST.md")
         message(FATAL_ERROR
-            "The staged OCR runtime is missing third-party license notices")
+            "The staged PaddleOCR runtime is missing third-party license notices")
     endif()
     set(_mtb_ocr_runtime_ready TRUE)
 endif()
@@ -222,6 +208,37 @@ endif()
 if(MINITREASUREBOX_REQUIRE_BUNDLED_OCR AND NOT _mtb_ocr_runtime_ready)
     message(FATAL_ERROR
         "MINITREASUREBOX_REQUIRE_BUNDLED_OCR requires MINITREASUREBOX_OCR_RUNTIME_ROOT")
+endif()
+
+option(MINITREASUREBOX_STAGE_BUNDLED_OCR_FOR_BUILD
+    "Copy the configured PaddleOCR runtime beside build-tree executables" ON)
+if(_mtb_ocr_runtime_ready AND MINITREASUREBOX_STAGE_BUNDLED_OCR_FOR_BUILD)
+    string(SHA256 _mtb_ocr_root_hash "${_mtb_ocr_root}")
+    string(SUBSTRING "${_mtb_ocr_root_hash}" 0 12 _mtb_ocr_root_hash_short)
+    set(_mtb_build_ocr_root "${CMAKE_BINARY_DIR}/ocr-runtime")
+    set(_mtb_build_ocr_stamp
+        "${_mtb_build_ocr_root}/.staged-${_mtb_ocr_root_hash_short}")
+    set(_mtb_ocr_stage_inputs
+        "${_mtb_ocr_worker}"
+        "${_mtb_ocr_root}/models/PP-OCRv5_mobile_det_onnx/inference.onnx"
+        "${_mtb_ocr_root}/models/PP-OCRv5_mobile_det_onnx/inference.yml"
+        "${_mtb_ocr_root}/models/PP-OCRv5_mobile_rec_onnx/inference.onnx"
+        "${_mtb_ocr_root}/models/PP-OCRv5_mobile_rec_onnx/inference.yml"
+        "${_mtb_ocr_root}/licenses/THIRD_PARTY_MANIFEST.md"
+    )
+    add_custom_command(
+        OUTPUT "${_mtb_build_ocr_stamp}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_mtb_build_ocr_root}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${_mtb_ocr_root}" "${_mtb_build_ocr_root}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_mtb_build_ocr_stamp}"
+        DEPENDS ${_mtb_ocr_stage_inputs}
+        COMMENT "Staging bundled PaddleOCR runtime for build-tree execution"
+        VERBATIM
+    )
+    add_custom_target(stage_minitreasurebox_ocr_runtime ALL
+        DEPENDS "${_mtb_build_ocr_stamp}")
+    add_dependencies(MiniTreasureBox stage_minitreasurebox_ocr_runtime)
 endif()
 
 if(APPLE)
@@ -236,18 +253,10 @@ if(_mtb_ocr_runtime_ready AND WIN32)
     install(DIRECTORY "${_mtb_ocr_root}/"
         DESTINATION "ocr-runtime"
         USE_SOURCE_PERMISSIONS)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
-        "${CMAKE_SOURCE_DIR}/licenses/Apache-2.0.txt"
-        DESTINATION "licenses")
 elseif(_mtb_ocr_runtime_ready AND APPLE)
     install(DIRECTORY "${_mtb_ocr_root}/"
         DESTINATION "MiniTreasureBox.app/Contents/Resources/ocr-runtime"
         USE_SOURCE_PERMISSIONS)
-    install(FILES
-        "${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
-        "${CMAKE_SOURCE_DIR}/licenses/Apache-2.0.txt"
-        DESTINATION "MiniTreasureBox.app/Contents/Resources/licenses")
 endif()
 
 if(WIN32 OR APPLE)

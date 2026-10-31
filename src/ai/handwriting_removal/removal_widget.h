@@ -9,10 +9,15 @@
 
 class QComboBox;
 class QLabel;
+class QProgressBar;
 class QPushButton;
 class QSlider;
 class QSpinBox;
 class QThread;
+
+namespace mtb::ui {
+class ToolStatusStrip;
+}
 
 namespace mtb::handwriting {
 
@@ -63,14 +68,19 @@ private:
     QSpinBox* brushSize_;
     QSlider* maskOpacity_;
     QPushButton* automaticButton_;
+    QPushButton* cancelButton_;
     QPushButton* undoButton_;
     QPushButton* redoButton_;
     QPushButton* exportButton_;
+    QProgressBar* progress_;
+    mtb::ui::ToolStatusStrip* statusStrip_;
     QVector<QThread*> workerThreads_;
     QThread* automaticThread_{nullptr};
     QThread* resultThread_{nullptr};
     quint64 automaticTaskId_{0};
     quint64 resultTaskId_{0};
+    int compareViewIndex_{1};
+    bool automaticCancellationRequested_{false};
     bool resultPending_{false};
     bool resultValid_{false};
 };

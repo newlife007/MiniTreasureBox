@@ -15,6 +15,7 @@
 #include <QListWidget>
 #include <QPalette>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSet>
 #include <QShortcut>
 #include <QStackedWidget>
@@ -54,6 +55,10 @@ QString themeStyleSheet(Theme theme)
     const QString primary = dark ? QStringLiteral("#8B83FF") : QStringLiteral("#665CF2");
     const QString primarySurface = dark ? QStringLiteral("#302C5B") : QStringLiteral("#EEECFF");
     const QString success = dark ? QStringLiteral("#55D0AE") : QStringLiteral("#19A982");
+    const QString warningSurface = dark ? QStringLiteral("#3A301E") : QStringLiteral("#FFF7E0");
+    const QString warning = dark ? QStringLiteral("#F2C15D") : QStringLiteral("#A96812");
+    const QString errorSurface = dark ? QStringLiteral("#3C2328") : QStringLiteral("#FFF0F1");
+    const QString error = dark ? QStringLiteral("#FF8585") : QStringLiteral("#C73A44");
 
     return QStringLiteral(R"(
         QWidget#mainCentral { background: %1; }
@@ -146,6 +151,157 @@ QString themeStyleSheet(Theme theme)
             padding: 8px 12px;
             font-weight: 600;
         }
+        QFrame#toolDetailHeader {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 14px;
+        }
+        QLabel#toolDetailTitle { color: %3; font-size: 22px; font-weight: 700; }
+        QLabel#toolDetailDescription { color: %4; font-size: 13px; }
+        QLabel#toolDetailCategory { color: %8; font-size: 12px; }
+        QLabel#toolDetailLocalState { color: %12; font-size: 12px; font-weight: 600; }
+        QPushButton#toolHeaderBackButton, QPushButton#toolDetailFavoriteButton,
+        QPushButton#backButton {
+            background: %5;
+            border: 1px solid %9;
+            border-radius: 8px;
+            color: %4;
+            padding: 7px 11px;
+            font-weight: 600;
+        }
+        QPushButton#toolHeaderBackButton:hover, QPushButton#toolDetailFavoriteButton:hover,
+        QPushButton#backButton:hover { background: %10; color: %7; border-color: %7; }
+        QScrollArea#toolDetailScroll, QWidget#toolWorkspaceHost { background: transparent; }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 14px;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolEditorPanel,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolInputCard,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolResultCard,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolInspectorPanel,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolControlBar,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolMetricCard {
+            background: %5;
+            border: 1px solid %9;
+            border-radius: 11px;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#toolSectionTitle {
+            color: %3;
+            font-size: 15px;
+            font-weight: 700;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#toolSectionDescription,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#toolInspectorLabel,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#toolMetricTitle,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#ocrSourceInfo,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#ocrResultCount {
+            color: %8;
+            font-size: 11px;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel[toolMetricValue="true"] {
+            color: %3;
+            font-size: 23px;
+            font-weight: 700;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QTextEdit,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLineEdit,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QComboBox,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QSpinBox {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 8px;
+            color: %3;
+            padding: 7px 9px;
+            selection-background-color: %7;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QTextEdit:focus,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLineEdit:focus,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QComboBox:focus,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QSpinBox:focus {
+            border-color: %7;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="primary"] {
+            background: %7;
+            border: 1px solid %7;
+            border-radius: 8px;
+            color: white;
+            padding: 7px 12px;
+            font-weight: 600;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="primary"]:hover {
+            background: %11;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="secondary"],
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="quiet"] {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 8px;
+            color: %4;
+            padding: 7px 11px;
+            font-weight: 600;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="secondary"]:hover,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="quiet"]:hover,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="quiet"]:checked {
+            background: %10;
+            border-color: %7;
+            color: %7;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QPushButton[toolButtonRole="warning"] {
+            background: %13;
+            border: 1px solid %14;
+            border-radius: 8px;
+            color: %14;
+            padding: 7px 11px;
+            font-weight: 600;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#toolStatusStrip,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#ocrStatusStrip,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame#restorationStatusStrip {
+            background: %5;
+            border: 1px solid %9;
+            border-radius: 9px;
+            color: %4;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame[toolState="ready"],
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame[toolState="success"] {
+            background: %10;
+            border-color: %12;
+            color: %12;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame[toolState="running"],
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame[toolState="warning"] {
+            background: %13;
+            border-color: %14;
+            color: %14;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QFrame[toolState="error"] {
+            background: %15;
+            border-color: %16;
+            color: %16;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#toolStatusIndicator { font-weight: 700; }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QLabel#ocrPreview,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QWidget#restorationCanvas {
+            background: %2;
+            border: 1px dashed %9;
+            border-radius: 9px;
+            color: %8;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QProgressBar#ocrProgress,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QProgressBar#restorationProgress {
+            background: %5;
+            border: 1px solid %9;
+            border-radius: 4px;
+            max-height: 7px;
+        }
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QProgressBar#ocrProgress::chunk,
+        QFrame#toolWorkspaceFrame[workspaceKind="tool"] QProgressBar#restorationProgress::chunk {
+            background: %7;
+            border-radius: 3px;
+        }
         QFrame#gameStateCard, QFrame#gameMetricCard,
         QFrame#gameHelpCard, QFrame#gameControlBar, QFrame#gameConfigBar {
             background: %2;
@@ -217,7 +373,11 @@ QString themeStyleSheet(Theme theme)
         .arg(border)
         .arg(primarySurface)
         .arg(dark ? QStringLiteral("#756CF0") : QStringLiteral("#554CD8"))
-        .arg(success);
+        .arg(success)
+        .arg(warningSurface)
+        .arg(warning)
+        .arg(errorSurface)
+        .arg(error);
 }
 }  // namespace
 
@@ -487,20 +647,34 @@ void MainWindow::showToolOverview(const QString& toolId)
     const ToolMetadata metadata = tool->metadata();
     toolPage_ = new QWidget(pages_);
     toolPage_->setObjectName(QStringLiteral("toolPage_%1").arg(metadata.id));
+
+    auto* topBackButton = new QPushButton(tr("← 返回"), toolPage_);
+    topBackButton->setObjectName(QStringLiteral("toolHeaderBackButton"));
+    topBackButton->setToolTip(tr("返回打开此工具前的工具列表（Esc）"));
+    topBackButton->setAccessibleName(tr("返回上一页"));
+    topBackButton->setAccessibleDescription(tr("返回打开此工具前的工具列表"));
+    connect(topBackButton, &QPushButton::clicked, this, &MainWindow::returnToPreviousView);
+
     auto* heading = new QLabel(metadata.name, toolPage_);
-    QFont font = heading->font();
-    font.setPointSize(18);
-    font.setBold(true);
-    heading->setFont(font);
+    heading->setObjectName(QStringLiteral("toolDetailTitle"));
     auto* description = new QLabel(metadata.description, toolPage_);
+    description->setObjectName(QStringLiteral("toolDetailDescription"));
     description->setWordWrap(true);
     auto* category = new QLabel(tr("分类：%1").arg(metadata.category), toolPage_);
-    auto* localState = new QLabel(metadata.requiresNetwork ? tr("需要网络连接") : tr("完全本地运行"), toolPage_);
+    category->setObjectName(QStringLiteral("toolDetailCategory"));
+    auto* localState = new QLabel(metadata.requiresNetwork
+                                      ? tr("需要网络连接")
+                                      : tr("● 完全在本机运行，不会上传内容"), toolPage_);
+    localState->setObjectName(QStringLiteral("toolDetailLocalState"));
 
     auto* favoriteButton = new QPushButton(toolPage_);
+    favoriteButton->setObjectName(QStringLiteral("toolDetailFavoriteButton"));
     favoriteButton->setToolTip(tr("切换此工具的收藏状态"));
+    favoriteButton->setAccessibleName(tr("收藏状态"));
+    favoriteButton->setAccessibleDescription(tr("收藏或取消收藏当前工具"));
     const auto updateFavoriteLabel = [this, favoriteButton, toolId] {
-        favoriteButton->setText(settings_.isFavorite(toolId) ? tr("取消收藏") : tr("收藏工具"));
+        favoriteButton->setText(settings_.isFavorite(toolId)
+                                    ? tr("★ 已收藏") : tr("☆ 收藏"));
     };
     updateFavoriteLabel();
     connect(favoriteButton, &QPushButton::clicked, this,
@@ -510,6 +684,26 @@ void MainWindow::showToolOverview(const QString& toolId)
                 homePage_->refresh();
             });
 
+    auto* titleColumn = new QVBoxLayout;
+    titleColumn->setSpacing(4);
+    titleColumn->addWidget(heading);
+    titleColumn->addWidget(description);
+    auto* metaRow = new QHBoxLayout;
+    metaRow->setSpacing(12);
+    metaRow->addWidget(category);
+    metaRow->addWidget(localState);
+    metaRow->addStretch();
+    titleColumn->addLayout(metaRow);
+
+    auto* header = new QFrame(toolPage_);
+    header->setObjectName(QStringLiteral("toolDetailHeader"));
+    auto* headerLayout = new QHBoxLayout(header);
+    headerLayout->setContentsMargins(16, 14, 16, 14);
+    headerLayout->setSpacing(14);
+    headerLayout->addWidget(topBackButton, 0, Qt::AlignTop);
+    headerLayout->addLayout(titleColumn, 1);
+    headerLayout->addWidget(favoriteButton, 0, Qt::AlignTop);
+
     auto* backButton = new QPushButton(tr("返回上一页"), toolPage_);
     backButton->setObjectName(QStringLiteral("backButton"));
     backButton->setToolTip(tr("返回打开此工具前的工具列表（Esc）"));
@@ -517,23 +711,37 @@ void MainWindow::showToolOverview(const QString& toolId)
     backButton->setAccessibleDescription(tr("返回打开此工具前的工具列表"));
     connect(backButton, &QPushButton::clicked, this, &MainWindow::returnToPreviousView);
 
-    auto* headerActions = new QHBoxLayout;
-    headerActions->addWidget(category);
-    headerActions->addWidget(localState);
-    headerActions->addStretch();
-    headerActions->addWidget(favoriteButton);
+    auto* scroll = new QScrollArea(toolPage_);
+    scroll->setObjectName(QStringLiteral("toolDetailScroll"));
+    scroll->setWidgetResizable(true);
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* workspaceHost = new QWidget(scroll);
+    workspaceHost->setObjectName(QStringLiteral("toolWorkspaceHost"));
+    auto* workspaceLayout = new QVBoxLayout(workspaceHost);
+    workspaceLayout->setContentsMargins(0, 0, 0, 0);
+    if (QWidget* content = tool->createWidget(workspaceHost)) {
+        auto* workspaceFrame = new QFrame(workspaceHost);
+        workspaceFrame->setObjectName(QStringLiteral("toolWorkspaceFrame"));
+        workspaceFrame->setProperty("workspaceKind",
+                                    content->property("gameId").isValid()
+                                        ? QStringLiteral("game") : QStringLiteral("tool"));
+        auto* frameLayout = new QVBoxLayout(workspaceFrame);
+        frameLayout->setContentsMargins(18, 18, 18, 18);
+        frameLayout->addWidget(content, 1);
+        workspaceLayout->addWidget(workspaceFrame, 1);
+    } else {
+        auto* unavailable = new QLabel(tr("此工具暂时没有可用界面。"), workspaceHost);
+        unavailable->setWordWrap(true);
+        workspaceLayout->addWidget(unavailable, 1);
+    }
+    scroll->setWidget(workspaceHost);
 
     auto* layout = new QVBoxLayout(toolPage_);
-    layout->addWidget(heading);
-    layout->addWidget(description);
-    layout->addLayout(headerActions);
-    if (QWidget* content = tool->createWidget(toolPage_)) {
-        layout->addWidget(content, 1);
-    } else {
-        auto* unavailable = new QLabel(tr("此工具暂时没有可用界面。"), toolPage_);
-        unavailable->setWordWrap(true);
-        layout->addWidget(unavailable, 1);
-    }
+    layout->setContentsMargins(22, 20, 22, 16);
+    layout->setSpacing(12);
+    layout->addWidget(header);
+    layout->addWidget(scroll, 1);
     layout->addWidget(backButton, 0, Qt::AlignLeft);
 
     pages_->addWidget(toolPage_);

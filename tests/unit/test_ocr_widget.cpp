@@ -35,9 +35,9 @@ namespace {
 QString fixtureExecutable()
 {
 #ifdef Q_OS_WIN
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("fake_tesseract.exe"));
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("fake_paddleocr_worker.exe"));
 #else
-    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("fake_tesseract"));
+    return QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("fake_paddleocr_worker"));
 #endif
 }
 
@@ -47,6 +47,22 @@ QString createImage(QTemporaryDir& directory, const QString& name)
     QImage image(30, 20, QImage::Format_RGB32);
     image.fill(Qt::white);
     return image.save(path, "PNG") ? path : QString();
+}
+
+QString createModels(QTemporaryDir& directory)
+{
+    const QString root = directory.filePath(QStringLiteral("models"));
+    for (const QString& model : {QStringLiteral("PP-OCRv5_mobile_det_onnx"),
+                                 QStringLiteral("PP-OCRv5_mobile_rec_onnx")}) {
+        const QString path = QDir(root).filePath(model);
+        QDir().mkpath(path);
+        for (const QString& fileName : {QStringLiteral("inference.onnx"),
+                                        QStringLiteral("inference.yml")}) {
+            QFile file(QDir(path).filePath(fileName));
+            file.open(QIODevice::WriteOnly);
+        }
+    }
+    return root;
 }
 
 QListWidgetItem* itemWithText(QListWidget* list, const QString& text)
@@ -105,9 +121,11 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(!imagePath.isEmpty());
     QVERIFY(!replacementPath.isEmpty());
 
-    ScopedEnvironment executableOverride("MINITREASUREBOX_TESSERACT",
+    const QString models = createModels(directory);
+    ScopedEnvironment executableOverride("MINITREASUREBOX_PADDLEOCR_WORKER",
                                          fixtureExecutable().toUtf8());
-    ScopedEnvironment dataOverride("TESSDATA_PREFIX", QByteArray());
+    ScopedEnvironment dataOverride("MINITREASUREBOX_PADDLEOCR_MODELS",
+                                   models.toUtf8());
     OcrWidget widget;
     widget.show();
     auto* language = widget.findChild<QComboBox*>(QStringLiteral("ocrLanguage"));
@@ -119,7 +137,7 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     auto* cancel = widget.findChild<QPushButton*>(QStringLiteral("ocrCancelButton"));
     QVERIFY(language);
     QVERIFY(!widget.findChild<QLineEdit*>(QStringLiteral("ocrExecutable")));
-    QVERIFY(!widget.findChild<QLineEdit*>(QStringLiteral("ocrTessdata")));
+    QVERIFY(!widget.findChild<QLineEdit*>(QStringLiteral("ocrModels")));
     QVERIFY(preview);
     QVERIFY(status);
     QVERIFY(result);
@@ -127,20 +145,15 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(exportButton);
     QVERIFY(cancel);
 
-    QCOMPARE(language->count(), 3);
+    QCOMPARE(language->count(), 1);
     QVERIFY(!language->isEditable());
-    QCOMPARE(language->itemData(0).toString(), QStringLiteral("chi_sim+eng"));
-    QCOMPARE(language->itemData(1).toString(), QStringLiteral("chi_sim"));
-    QCOMPARE(language->itemData(2).toString(), QStringLiteral("eng"));
-    language->setCurrentIndex(language->findData(QStringLiteral("eng")));
-    language->setCurrentText(QStringLiteral("deu"));
-    QCOMPARE(language->currentData().toString(), QStringLiteral("eng"));
+    QCOMPARE(language->itemData(0).toString(), QStringLiteral("ch"));
     QVERIFY(widget.importImage(imagePath));
     QVERIFY(!preview->pixmap().isNull());
     widget.startRecognition();
     QVERIFY(status->text().contains(QStringLiteral("正在")));
     QVERIFY(cancel->isEnabled());
-    QTRY_COMPARE_WITH_TIMEOUT(result->toPlainText(), QStringLiteral("fixture text for exam-page"), 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(result->toPlainText(), QStringLiteral("fixture text for exam-page"), 15000);
     QCOMPARE(status->text(), QStringLiteral("识别完成。"));
 
     result->setPlainText(QStringLiteral("edited result"));
@@ -164,7 +177,7 @@ void OcrWidgetTest::importsRecognizesCopiesAndExports()
     QVERIFY(!widget.exportText(directory.filePath(QStringLiteral("stale.txt")), &error));
 
     {
-        ScopedEnvironment failureMode("MINITREASUREBOX_FAKE_TESSERACT_MODE", "fail");
+        ScopedEnvironment failureMode("MINITREASUREBOX_FAKE_PADDLEOCR_MODE", "fail");
         widget.startRecognition();
         QVERIFY(result->toPlainText().isEmpty());
         QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("失败")), 3000);
@@ -186,9 +199,9 @@ void OcrWidgetTest::reportsMissingPackagedComponentAsRepairProblem()
     const QString imagePath = createImage(directory, QStringLiteral("missing-runtime.png"));
     QVERIFY(!imagePath.isEmpty());
 
-    ScopedEnvironment missingExecutable("MINITREASUREBOX_TESSERACT",
-                                        directory.filePath(QStringLiteral("missing-tesseract")).toUtf8());
-    ScopedEnvironment noDataOverride("TESSDATA_PREFIX", QByteArray());
+    ScopedEnvironment missingExecutable("MINITREASUREBOX_PADDLEOCR_WORKER",
+                                        directory.filePath(QStringLiteral("missing-paddleocr-worker")).toUtf8());
+    ScopedEnvironment noDataOverride("MINITREASUREBOX_PADDLEOCR_MODELS", QByteArray());
     ScopedEnvironment restrictedPath("PATH", directory.filePath(QStringLiteral("empty-path")).toUtf8());
     OcrWidget widget;
     widget.show();
@@ -199,7 +212,7 @@ void OcrWidgetTest::reportsMissingPackagedComponentAsRepairProblem()
     QVERIFY(status);
     QVERIFY(status->text().contains(QStringLiteral("修复"))
             || status->text().contains(QStringLiteral("重新安装应用")));
-    QVERIFY(!status->text().contains(QStringLiteral("安装 Tesseract")));
+    QVERIFY(!status->text().contains(QStringLiteral("安装 PaddleOCR")));
     QVERIFY(!status->text().contains(QStringLiteral("配置可执行文件")));
 }
 

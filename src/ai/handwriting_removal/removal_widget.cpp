@@ -1,17 +1,24 @@
 #include "ai/handwriting_removal/removal_widget.h"
+#include "ui/widgets/tool_workspace/responsive_pair.h"
+#include "ui/widgets/tool_workspace/tool_status_strip.h"
 
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
+#include <QFormLayout>
+#include <QFrame>
+#include <QGridLayout>
 #include <QHBoxLayout>
 #include <QImageReader>
 #include <QLabel>
+#include <QMessageBox>
 #include <QMouseEvent>
 #include <QMimeData>
 #include <QPainter>
 #include <QPointer>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QSlider>
@@ -20,6 +27,7 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <functional>
 
 namespace mtb::handwriting {
@@ -39,6 +47,20 @@ QPushButton* makeButton(const QString& text, const QString& objectName,
     return button;
 }
 
+qsizetype selectedPixelCount(const QImage& mask)
+{
+    if (mask.isNull()) return 0;
+    const QImage grayscale = mask.format() == QImage::Format_Grayscale8
+        ? mask : mask.convertToFormat(QImage::Format_Grayscale8);
+    qsizetype selected = 0;
+    for (int y = 0; y < grayscale.height(); ++y) {
+        const uchar* line = grayscale.constScanLine(y);
+        selected += std::count_if(line, line + grayscale.width(),
+                                  [](uchar value) { return value != 0; });
+    }
+    return selected;
+}
+
 }  // namespace
 
 class RemovalCanvas final : public QWidget {
@@ -48,7 +70,7 @@ public:
     {
         setObjectName(QStringLiteral("restorationCanvas"));
         setAccessibleName(tr("试卷原图、Mask 和复原结果编辑区域"));
-        setMinimumSize(420, 260);
+        setMinimumSize(360, 260);
         setMouseTracking(true);
     }
 
@@ -58,6 +80,10 @@ public:
     void setBrushRadius(int radius) { brushRadius_ = radius; }
     void setMaskOpacity(int opacity) { maskOpacity_ = opacity; update(); }
     void setEditedCallback(std::function<void(bool)> callback) { edited_ = std::move(callback); }
+    void setEditingStartedCallback(std::function<void()> callback)
+    {
+        editingStarted_ = std::move(callback);
+    }
 
 protected:
     void paintEvent(QPaintEvent*) override
@@ -110,6 +136,7 @@ protected:
         if (event->button() != Qt::LeftButton || !document_->isLoaded()) {
             return;
         }
+        if (editingStarted_) editingStarted_();
         if (tool_ == EditTool::Rectangle) {
             draggingRectangle_ = true;
             rectangleStart_ = event->position().toPoint();
@@ -201,6 +228,7 @@ private:
     bool draggingRectangle_{false};
     QPoint rectangleStart_;
     QPoint rectangleEnd_;
+    std::function<void()> editingStarted_;
     std::function<void(bool)> edited_;
 };
 
@@ -216,12 +244,16 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     , maskOpacity_(new QSlider(Qt::Horizontal, this))
     , automaticButton_(makeButton(tr("自动生成 Mask"), QStringLiteral("restorationAutoButton"),
                                    tr("运行保守的本地颜色对比检测，不使用训练模型"), this))
+    , cancelButton_(makeButton(tr("取消处理"), QStringLiteral("restorationCancelButton"),
+                                tr("取消正在运行的自动 Mask 任务"), this))
     , undoButton_(makeButton(tr("撤销"), QStringLiteral("restorationUndoButton"),
                              tr("撤销上一次 Mask 修改"), this))
     , redoButton_(makeButton(tr("重做"), QStringLiteral("restorationRedoButton"),
                              tr("重做上一次撤销的 Mask 修改"), this))
     , exportButton_(makeButton(tr("导出 PNG"), QStringLiteral("restorationExportButton"),
                                tr("将复原预览原子保存到用户选择的位置"), this))
+    , progress_(new QProgressBar(this))
+    , statusStrip_(new mtb::ui::ToolStatusStrip(status_, this))
 {
     setObjectName(QStringLiteral("handwritingRemovalWidget"));
     setAcceptDrops(true);
@@ -229,12 +261,20 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     status_->setObjectName(QStringLiteral("restorationStatus"));
     status_->setAccessibleName(tr("试卷复原处理状态"));
     status_->setWordWrap(true);
+    statusStrip_->setObjectName(QStringLiteral("restorationStatusStrip"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Idle,
+                           tr("等待导入图片。内置功能是保守的本地图像基线，不是训练模型。"));
+    progress_->setObjectName(QStringLiteral("restorationProgress"));
+    progress_->setRange(0, 1);
+    progress_->setValue(0);
+    progress_->setTextVisible(false);
     viewSelector_->setObjectName(QStringLiteral("restorationViewSelector"));
     viewSelector_->setAccessibleName(tr("选择原图、Mask 或结果视图"));
     viewSelector_->addItem(tr("原图"), static_cast<int>(DisplayView::Original));
     viewSelector_->addItem(tr("Mask"), static_cast<int>(DisplayView::Mask));
     viewSelector_->addItem(tr("结果"), static_cast<int>(DisplayView::Result));
     viewSelector_->setCurrentIndex(1);
+    viewSelector_->hide();
 
     brushSize_->setObjectName(QStringLiteral("restorationBrushSize"));
     brushSize_->setAccessibleName(tr("Mask 画笔大小"));
@@ -260,6 +300,16 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
                                      tr("放弃手动修改并恢复最近一次自动 Mask"), this);
     auto* clearButton = makeButton(tr("清空 Mask"), QStringLiteral("restorationClearButton"),
                                    tr("清除 Mask，但保留内存中的原图"), this);
+    importButton->setProperty("toolButtonRole", QStringLiteral("secondary"));
+    automaticButton_->setProperty("toolButtonRole", QStringLiteral("primary"));
+    cancelButton_->setProperty("toolButtonRole", QStringLiteral("warning"));
+    undoButton_->setProperty("toolButtonRole", QStringLiteral("secondary"));
+    redoButton_->setProperty("toolButtonRole", QStringLiteral("secondary"));
+    exportButton_->setProperty("toolButtonRole", QStringLiteral("primary"));
+    for (QPushButton* button : {brushButton, eraserButton, rectangleButton,
+                                compareButton, restartButton, clearButton}) {
+        button->setProperty("toolButtonRole", QStringLiteral("quiet"));
+    }
     brushButton->setCheckable(true);
     eraserButton->setCheckable(true);
     rectangleButton->setCheckable(true);
@@ -270,36 +320,122 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     toolGroup->addButton(eraserButton, static_cast<int>(EditTool::Eraser));
     toolGroup->addButton(rectangleButton, static_cast<int>(EditTool::Rectangle));
 
-    auto* sourceRow = new QHBoxLayout;
+    auto* sourceBar = new QFrame(this);
+    sourceBar->setObjectName(QStringLiteral("toolControlBar"));
+    auto* sourceRow = new QHBoxLayout(sourceBar);
+    sourceRow->setContentsMargins(12, 10, 12, 10);
+    sourceRow->setSpacing(8);
     sourceRow->addWidget(importButton);
     sourceRow->addWidget(automaticButton_);
+    sourceRow->addWidget(cancelButton_);
+    sourceRow->addStretch();
     sourceRow->addWidget(undoButton_);
     sourceRow->addWidget(redoButton_);
-    sourceRow->addWidget(restartButton);
-    sourceRow->addWidget(clearButton);
-    sourceRow->addStretch();
 
-    auto* editRow = new QHBoxLayout;
-    editRow->addWidget(brushButton);
-    editRow->addWidget(eraserButton);
-    editRow->addWidget(rectangleButton);
-    editRow->addWidget(new QLabel(tr("画笔大小"), this));
-    editRow->addWidget(brushSize_);
-    editRow->addWidget(new QLabel(tr("Mask 透明度"), this));
-    editRow->addWidget(maskOpacity_, 1);
-    editRow->addWidget(viewSelector_);
-    editRow->addWidget(compareButton);
-    editRow->addWidget(exportButton_);
+    auto* canvasPanel = new QFrame(this);
+    canvasPanel->setObjectName(QStringLiteral("toolEditorPanel"));
+    auto* canvasTitle = new QLabel(tr("复原画布"), canvasPanel);
+    canvasTitle->setObjectName(QStringLiteral("toolSectionTitle"));
+    auto* canvasHint = new QLabel(tr("在 Mask 视图中标记需要移除的手写区域。所有处理仅在本机完成。"),
+                                  canvasPanel);
+    canvasHint->setObjectName(QStringLiteral("toolSectionDescription"));
+    canvasHint->setWordWrap(true);
+    auto* canvasLayout = new QVBoxLayout(canvasPanel);
+    canvasLayout->setContentsMargins(14, 12, 14, 14);
+    canvasLayout->setSpacing(8);
+    canvasLayout->addWidget(canvasTitle);
+    canvasLayout->addWidget(canvasHint);
+    canvasLayout->addWidget(canvas_, 1);
 
+    auto* inspector = new QFrame(this);
+    inspector->setObjectName(QStringLiteral("toolInspectorPanel"));
+    auto* inspectorTitle = new QLabel(tr("编辑与检查"), inspector);
+    inspectorTitle->setObjectName(QStringLiteral("toolSectionTitle"));
+    auto* toolTitle = new QLabel(tr("Mask 工具"), inspector);
+    toolTitle->setObjectName(QStringLiteral("toolInspectorLabel"));
+    auto* toolGrid = new QGridLayout;
+    toolGrid->setSpacing(7);
+    toolGrid->addWidget(brushButton, 0, 0);
+    toolGrid->addWidget(eraserButton, 0, 1);
+    toolGrid->addWidget(rectangleButton, 1, 0, 1, 2);
+
+    auto* brushLabel = new QLabel(tr("画笔大小"), inspector);
+    brushLabel->setObjectName(QStringLiteral("toolInspectorLabel"));
+    auto* opacityLabel = new QLabel(tr("Mask 透明度"), inspector);
+    opacityLabel->setObjectName(QStringLiteral("toolInspectorLabel"));
+
+    auto* viewTitle = new QLabel(tr("查看"), inspector);
+    viewTitle->setObjectName(QStringLiteral("toolInspectorLabel"));
+    auto* originalViewButton = makeButton(tr("原图"), QStringLiteral("restorationOriginalViewButton"),
+                                          tr("查看未修改的原图"), inspector);
+    auto* maskViewButton = makeButton(tr("Mask"), QStringLiteral("restorationMaskViewButton"),
+                                      tr("查看并编辑候选 Mask"), inspector);
+    auto* resultViewButton = makeButton(tr("结果"), QStringLiteral("restorationResultViewButton"),
+                                        tr("查看当前复原结果"), inspector);
+    for (QPushButton* button : {originalViewButton, maskViewButton, resultViewButton}) {
+        button->setCheckable(true);
+        button->setProperty("toolButtonRole", QStringLiteral("quiet"));
+    }
+    maskViewButton->setChecked(true);
+    auto* viewGroup = new QButtonGroup(this);
+    viewGroup->setExclusive(true);
+    viewGroup->addButton(originalViewButton, 0);
+    viewGroup->addButton(maskViewButton, 1);
+    viewGroup->addButton(resultViewButton, 2);
+    auto* viewRow = new QHBoxLayout;
+    viewRow->setSpacing(6);
+    viewRow->addWidget(originalViewButton);
+    viewRow->addWidget(maskViewButton);
+    viewRow->addWidget(resultViewButton);
+
+    auto* inspectorLayout = new QVBoxLayout(inspector);
+    inspectorLayout->setContentsMargins(14, 12, 14, 14);
+    inspectorLayout->setSpacing(8);
+    inspectorLayout->addWidget(inspectorTitle);
+    inspectorLayout->addWidget(toolTitle);
+    inspectorLayout->addLayout(toolGrid);
+    inspectorLayout->addWidget(brushLabel);
+    inspectorLayout->addWidget(brushSize_);
+    inspectorLayout->addWidget(opacityLabel);
+    inspectorLayout->addWidget(maskOpacity_);
+    inspectorLayout->addWidget(viewTitle);
+    inspectorLayout->addLayout(viewRow);
+    inspectorLayout->addWidget(compareButton);
+    inspectorLayout->addSpacing(4);
+    inspectorLayout->addWidget(restartButton);
+    inspectorLayout->addWidget(clearButton);
+    inspectorLayout->addStretch();
+    inspectorLayout->addWidget(exportButton_);
+    inspectorLayout->addWidget(viewSelector_);
+
+    auto* pair = new mtb::ui::ResponsivePair(canvasPanel, inspector, 760, this);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addLayout(sourceRow);
-    layout->addLayout(editRow);
-    layout->addWidget(canvas_, 1);
-    layout->addWidget(status_);
+    layout->setSpacing(10);
+    layout->addWidget(sourceBar);
+    layout->addWidget(progress_);
+    layout->addWidget(statusStrip_);
+    layout->addWidget(pair, 1);
 
     connect(importButton, &QPushButton::clicked, this, [this] { chooseImage(); });
     connect(automaticButton_, &QPushButton::clicked, this, [this] { startAutomaticProcessing(); });
+    connect(cancelButton_, &QPushButton::clicked, this, [this] {
+        if (automaticThread_) {
+            ++automaticTaskId_;
+            automaticCancellationRequested_ = true;
+            automaticThread_->requestInterruption();
+            cancelButton_->setEnabled(false);
+            statusStrip_->setState(mtb::ui::ToolUiState::Warning,
+                                   tr("正在取消自动 Mask 任务…"));
+            return;
+        }
+        if (resultThread_) {
+            cancelResultProcessing();
+            statusStrip_->setState(mtb::ui::ToolUiState::Warning,
+                                   tr("复原预览更新已取消，当前 Mask 保持不变。"));
+            refreshControls();
+        }
+    });
     connect(undoButton_, &QPushButton::clicked, this, [this] {
         if (document_.undo()) refreshResult();
     });
@@ -309,18 +445,26 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     connect(restartButton, &QPushButton::clicked, this, [this] { restartMask(); });
     connect(clearButton, &QPushButton::clicked, this, [this] { clearMask(); });
     connect(exportButton_, &QPushButton::clicked, this, [this] { chooseExportPath(); });
-    connect(viewSelector_, &QComboBox::currentIndexChanged, this, [this](int index) {
-        canvas_->setView(static_cast<DisplayView>(viewSelector_->itemData(index).toInt()));
-    });
+    connect(viewSelector_, &QComboBox::currentIndexChanged, this,
+            [this, viewGroup](int index) {
+                canvas_->setView(static_cast<DisplayView>(viewSelector_->itemData(index).toInt()));
+                if (auto* button = viewGroup->button(index)) button->setChecked(true);
+            });
+    connect(viewGroup, &QButtonGroup::idClicked, viewSelector_,
+            [this](int index) { viewSelector_->setCurrentIndex(index); });
     connect(brushSize_, &QSpinBox::valueChanged, canvas_, &RemovalCanvas::setBrushRadius);
     connect(maskOpacity_, &QSlider::valueChanged, canvas_, &RemovalCanvas::setMaskOpacity);
     connect(toolGroup, &QButtonGroup::idClicked, this,
             [this](int id) { canvas_->setTool(static_cast<EditTool>(id)); });
     connect(compareButton, &QPushButton::pressed, this, [this] {
+        compareViewIndex_ = viewSelector_->currentIndex();
         viewSelector_->setCurrentIndex(0);
     });
     connect(compareButton, &QPushButton::released, this, [this] {
-        viewSelector_->setCurrentIndex(2);
+        viewSelector_->setCurrentIndex(compareViewIndex_);
+    });
+    canvas_->setEditingStartedCallback([this] {
+        if (viewSelector_->currentIndex() != 1) viewSelector_->setCurrentIndex(1);
     });
     canvas_->setEditedCallback([this](bool final) {
         if (final) {
@@ -357,13 +501,15 @@ bool HandwritingRemovalWidget::importImage(const QString& path)
     }
     ++automaticTaskId_;
     if (automaticThread_) automaticThread_->requestInterruption();
+    automaticCancellationRequested_ = false;
     cancelResultProcessing();
     automaticMask_ = {};
     result_ = document_.original().copy();
     resultValid_ = true;
     canvas_->setResult(result_);
     viewSelector_->setCurrentIndex(1);
-    status_->setText(tr("图片已载入内存。原文件不会被覆盖，可生成候选 Mask 或手动编辑。"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Ready,
+                           tr("图片已载入内存。原文件不会被覆盖，可生成候选 Mask 或手动编辑。"));
     refreshControls();
     return true;
 }
@@ -373,13 +519,15 @@ void HandwritingRemovalWidget::startAutomaticProcessing()
     if (automaticThread_ || !document_.isLoaded()) {
         return;
     }
+    automaticCancellationRequested_ = false;
     cancelResultProcessing();
     const QImage original = document_.original().copy();
     const auto engine = engine_;
     const quint64 currentTask = ++automaticTaskId_;
     QPointer<HandwritingRemovalWidget> guard(this);
     setBusy(true);
-    status_->setText(tr("正在运行保守的本地图像检测，不会上传图片。"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Running,
+                           tr("正在运行保守的本地图像检测，不会上传图片。"));
     automaticThread_ = QThread::create([original, engine, guard, currentTask] {
         const RemovalResult result = engine->detectAndRemove(original, {}, [] {
             return QThread::currentThread()->isInterruptionRequested();
@@ -399,7 +547,8 @@ void HandwritingRemovalWidget::clearMask()
     if (!document_.isLoaded() || automaticThread_) return;
     document_.clearMask();
     refreshResult();
-    status_->setText(tr("Mask 已清空，内存中的原图仍保持不变。"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Running,
+                           tr("Mask 已清空，正在后台更新复原预览。"));
 }
 
 void HandwritingRemovalWidget::restartMask()
@@ -407,7 +556,8 @@ void HandwritingRemovalWidget::restartMask()
     if (!document_.isLoaded() || automaticMask_.isNull() || automaticThread_) return;
     if (document_.setMask(automaticMask_)) {
         refreshResult();
-        status_->setText(tr("已恢复最近一次自动生成的候选 Mask。"));
+        statusStrip_->setState(mtb::ui::ToolUiState::Running,
+                               tr("已恢复自动 Mask，正在后台更新复原预览。"));
     }
 }
 
@@ -463,12 +613,19 @@ void HandwritingRemovalWidget::chooseImage()
 
 void HandwritingRemovalWidget::chooseExportPath()
 {
+    const auto choice = QMessageBox::warning(
+        this, tr("导出前检查"),
+        tr("请先确认复原结果。复杂纹理和被手写内容覆盖的区域可能无法无损恢复。\n\n是否继续导出当前结果？"),
+        QMessageBox::Save | QMessageBox::Cancel, QMessageBox::Cancel);
+    if (choice != QMessageBox::Save) return;
+
     const QString path = QFileDialog::getSaveFileName(
         this, tr("导出复原结果"), QStringLiteral("restored-exam.png"), tr("PNG 图片 (*.png)"));
     if (path.isEmpty()) return;
     QString error;
     if (exportPng(path, &error)) {
-        status_->setText(tr("PNG 已导出到用户选择的位置，原图片未被覆盖。"));
+        statusStrip_->setState(mtb::ui::ToolUiState::Success,
+                               tr("PNG 已导出到用户选择的位置，原图片未被覆盖。"));
     } else {
         showError(error);
     }
@@ -486,8 +643,18 @@ void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResu
     result_ = result.restored.copy();
     resultValid_ = true;
     canvas_->setResult(result_);
-    viewSelector_->setCurrentIndex(1);
-    status_->setText(result.message);
+    viewSelector_->setCurrentIndex(2);
+    const qsizetype candidatePixels = selectedPixelCount(result.mask);
+    if (candidatePixels == 0) {
+        statusStrip_->setState(
+            mtb::ui::ToolUiState::Warning,
+            tr("自动处理已完成，但未检测到彩色候选笔迹。可切换到 Mask，使用画笔标记需要移除的区域。"));
+    } else {
+        statusStrip_->setState(
+            mtb::ui::ToolUiState::Success,
+            tr("自动处理完成，已显示复原结果并标记 %1 个候选像素。请切换到 Mask 检查。")
+                .arg(candidatePixels));
+    }
     refreshControls();
 }
 
@@ -502,7 +669,8 @@ void HandwritingRemovalWidget::refreshResult()
     QPointer<HandwritingRemovalWidget> guard(this);
     resultPending_ = true;
     resultValid_ = false;
-    status_->setText(tr("正在后台更新复原预览。"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Running,
+                           tr("正在后台更新复原预览。"));
     resultThread_ = QThread::create([original, mask, engine, guard, currentTask] {
         const RemovalResult result = engine->removeWithMask(original, mask, {}, [] {
             return QThread::currentThread()->isInterruptionRequested();
@@ -530,7 +698,8 @@ void HandwritingRemovalWidget::finishResult(quint64 taskId, const RemovalResult&
     result_ = result.restored;
     resultValid_ = true;
     canvas_->setResult(result_);
-    status_->setText(result.message);
+    viewSelector_->setCurrentIndex(2);
+    statusStrip_->setState(mtb::ui::ToolUiState::Success, result.message);
     refreshControls();
 }
 
@@ -552,6 +721,12 @@ void HandwritingRemovalWidget::trackWorker(QThread* thread)
         if (automaticThread_ == thread) {
             automaticThread_ = nullptr;
             setBusy(false);
+            refreshControls();
+            if (automaticCancellationRequested_) {
+                automaticCancellationRequested_ = false;
+                statusStrip_->setState(mtb::ui::ToolUiState::Warning,
+                                       tr("自动 Mask 任务已取消，当前图片和编辑保持不变。"));
+            }
         }
         if (resultThread_ == thread) resultThread_ = nullptr;
         thread->deleteLater();
@@ -561,19 +736,29 @@ void HandwritingRemovalWidget::trackWorker(QThread* thread)
 void HandwritingRemovalWidget::refreshControls()
 {
     const bool loaded = document_.isLoaded();
-    const bool idle = automaticThread_ == nullptr;
-    automaticButton_->setEnabled(loaded && idle);
-    undoButton_->setEnabled(loaded && idle && document_.canUndo());
-    redoButton_->setEnabled(loaded && idle && document_.canRedo());
-    exportButton_->setEnabled(loaded && idle && !resultPending_ && resultValid_
+    const bool automaticIdle = automaticThread_ == nullptr;
+    const bool processing = !automaticIdle || resultPending_;
+    automaticButton_->setText(automaticIdle ? tr("自动生成 Mask") : tr("正在自动处理…"));
+    automaticButton_->setEnabled(loaded && automaticIdle);
+    cancelButton_->setEnabled(loaded && processing);
+    progress_->setRange(0, processing ? 0 : 1);
+    if (!processing) progress_->setValue(0);
+    undoButton_->setEnabled(loaded && automaticIdle && document_.canUndo());
+    redoButton_->setEnabled(loaded && automaticIdle && document_.canRedo());
+    exportButton_->setEnabled(loaded && automaticIdle && !resultPending_ && resultValid_
                               && !result_.isNull());
-    canvas_->setEnabled(loaded && idle);
+    canvas_->setEnabled(loaded && automaticIdle);
     canvas_->update();
 }
 
 void HandwritingRemovalWidget::setBusy(bool busy)
 {
+    automaticButton_->setText(busy ? tr("正在自动处理…") : tr("自动生成 Mask"));
     automaticButton_->setEnabled(!busy && document_.isLoaded());
+    cancelButton_->setEnabled(busy || resultPending_);
+    const bool processing = busy || resultPending_;
+    progress_->setRange(0, processing ? 0 : 1);
+    if (!processing) progress_->setValue(0);
     undoButton_->setEnabled(!busy && document_.canUndo());
     redoButton_->setEnabled(!busy && document_.canRedo());
     exportButton_->setEnabled(!busy && !resultPending_ && resultValid_
@@ -583,7 +768,7 @@ void HandwritingRemovalWidget::setBusy(bool busy)
 
 void HandwritingRemovalWidget::showError(const QString& message)
 {
-    status_->setText(message);
+    statusStrip_->setState(mtb::ui::ToolUiState::Error, message);
 }
 
 QWidget* createHandwritingRemovalWidget(QWidget* parent)

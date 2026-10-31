@@ -5,13 +5,16 @@
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
-#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QThread>
 
 namespace mtb::ocr {
 namespace {
+
+constexpr qsizetype kMaximumCapturedOutput = 1024 * 1024;
 
 OcrResult failure(OcrError error, const QString& message)
 {
@@ -39,87 +42,149 @@ QStringList packagedRuntimeRoots(const QString& applicationDirPath)
         applicationDirectory.filePath(QStringLiteral("../Resources/ocr-runtime")),
         applicationDirectory.filePath(QStringLiteral("../lib/MiniTreasureBox/ocr-runtime")),
     };
-    for (QString& root : roots) {
-        root = QDir::cleanPath(root);
-    }
+    for (QString& root : roots) root = QDir::cleanPath(root);
     roots.removeDuplicates();
     return roots;
 }
 
 struct PackagedRuntime {
     QString executable;
-    QString tessdataPath;
+    QString modelPath;
 };
 
 PackagedRuntime findPackagedRuntime(const QString& applicationDirPath)
 {
 #ifdef Q_OS_WIN
-    const QString executableName = QStringLiteral("tesseract.exe");
+    const QString executableName = QStringLiteral("paddleocr-worker.exe");
 #else
-    const QString executableName = QStringLiteral("tesseract");
+    const QString executableName = QStringLiteral("paddleocr-worker");
 #endif
     for (const QString& root : packagedRuntimeRoots(applicationDirPath)) {
         const QDir runtime(root);
-        const QStringList executableCandidates{
-            runtime.filePath(QStringLiteral("bin/") + executableName),
-            runtime.filePath(QStringLiteral("Library/bin/") + executableName),
-        };
-        QString executable;
-        for (const QString& candidate : executableCandidates) {
-            if (!resolvedExecutable(candidate).isEmpty()) {
-                executable = QFileInfo(candidate).canonicalFilePath();
-                break;
-            }
+        const QString executable = runtime.filePath(QStringLiteral("bin/") + executableName);
+        const QString models = runtime.filePath(QStringLiteral("models"));
+        if (!resolvedExecutable(executable).isEmpty() && QFileInfo(models).isDir()) {
+            return {QFileInfo(executable).canonicalFilePath(), QDir(models).canonicalPath()};
         }
-        if (executable.isEmpty()) {
-            continue;
-        }
-
-        const QStringList tessdataCandidates{
-            runtime.filePath(QStringLiteral("share/tessdata")),
-            runtime.filePath(QStringLiteral("Library/share/tessdata")),
-        };
-        QString tessdataPath = QDir::cleanPath(tessdataCandidates.constFirst());
-        for (const QString& candidate : tessdataCandidates) {
-            if (QFileInfo(candidate).isDir()) {
-                tessdataPath = QDir(candidate).canonicalPath();
-                break;
-            }
-        }
-        return {executable, tessdataPath};
     }
     return {};
 }
 
-bool languageFilesExist(const OcrRequest& request)
+bool modelFilesExist(const QString& modelPath)
 {
-    if (request.tessdataPath.trimmed().isEmpty()) {
-        return true;
-    }
-    const QDir directory(request.tessdataPath.trimmed());
-    if (!directory.exists()) {
-        return false;
-    }
-    const QStringList languages = request.language.split(QLatin1Char('+'), Qt::SkipEmptyParts);
-    for (const QString& language : languages) {
-        if (!QFileInfo::exists(directory.filePath(language + QStringLiteral(".traineddata")))) {
+    const QDir root(modelPath);
+    if (!root.exists()) return false;
+    for (const QString& model : {QStringLiteral("PP-OCRv5_mobile_det_onnx"),
+                                 QStringLiteral("PP-OCRv5_mobile_rec_onnx")}) {
+        const QDir directory(root.filePath(model));
+        if (!QFileInfo::exists(directory.filePath(QStringLiteral("inference.onnx")))
+            || !QFileInfo::exists(directory.filePath(QStringLiteral("inference.yml")))) {
             return false;
         }
     }
     return true;
 }
 
-bool reportsMissingLanguageData(const QByteArray& standardError)
+void appendCapped(QByteArray& destination, const QByteArray& data)
 {
-    return standardError.contains("Error opening data file")
-        || standardError.contains("Failed loading language")
-        || standardError.contains("Could not initialize tesseract");
+    destination.append(data);
+    if (destination.size() > kMaximumCapturedOutput) {
+        destination.remove(0, destination.size() - kMaximumCapturedOutput);
+    }
+}
+
+OcrError workerError(const QString& code)
+{
+    if (code == QStringLiteral("invalid_input")) return OcrError::InvalidInput;
+    if (code == QStringLiteral("model_missing")) return OcrError::ModelDataMissing;
+    if (code == QStringLiteral("empty_output")) return OcrError::EmptyOutput;
+    return OcrError::ProcessFailed;
+}
+
+QByteArray normalizedWorkerOutput(const QByteArray& output)
+{
+    const qsizetype start = qMax<qsizetype>(0, output.size() - kMaximumCapturedOutput);
+    QByteArray normalized;
+    normalized.reserve(output.size() - start);
+    for (qsizetype index = start; index < output.size(); ++index) {
+        const char character = output.at(index);
+        if (character != '\0') normalized.append(character);
+    }
+    return normalized;
+}
+
+bool findLastWorkerObject(const QByteArray& output, QJsonObject* object)
+{
+    const QByteArray marker("{\"ok\"");
+    const qsizetype start = output.lastIndexOf(marker);
+    if (start < 0) return false;
+
+    int depth = 0;
+    bool inString = false;
+    bool escaped = false;
+    for (qsizetype index = start; index < output.size(); ++index) {
+        const char character = output.at(index);
+        if (inString) {
+            if (escaped) escaped = false;
+            else if (character == '\\') escaped = true;
+            else if (character == '"') inString = false;
+            continue;
+        }
+        if (character == '"') {
+            inString = true;
+        } else if (character == '{') {
+            ++depth;
+        } else if (character == '}') {
+            --depth;
+            if (depth == 0) {
+                QJsonParseError parseError;
+                const QJsonDocument document = QJsonDocument::fromJson(
+                    output.mid(start, index - start + 1), &parseError);
+                if (parseError.error == QJsonParseError::NoError
+                    && document.isObject()) {
+                    *object = document.object();
+                    return true;
+                }
+                return false;
+            }
+        }
+    }
+    return false;
+}
+
+OcrResult parseWorkerResponse(const QByteArray& output)
+{
+    const QByteArray normalized = normalizedWorkerOutput(output);
+    QJsonObject object;
+    if (!findLastWorkerObject(normalized, &object)) {
+        return failure(OcrError::ProtocolError,
+                       QStringLiteral("应用内置 PaddleOCR 组件返回了无效响应，请修复或重新安装应用。"));
+    }
+    if (!object.value(QStringLiteral("ok")).toBool(false)) {
+        const OcrError error = workerError(object.value(QStringLiteral("error")).toString());
+        if (error == OcrError::ModelDataMissing) {
+            return failure(error,
+                           QStringLiteral("应用内置 PaddleOCR 模型缺失或损坏，请修复或重新安装应用。"));
+        }
+        if (error == OcrError::EmptyOutput) {
+            return failure(error,
+                           QStringLiteral("识别完成但没有检测到文字。请尝试更清晰的图片。"));
+        }
+        return failure(error,
+                       QStringLiteral("本地 PaddleOCR 处理失败。原图片未修改，请稍后重试。"));
+    }
+    const QString text = object.value(QStringLiteral("text")).toString().trimmed();
+    if (text.isEmpty()) {
+        return failure(OcrError::EmptyOutput,
+                       QStringLiteral("识别完成但没有检测到文字。请尝试更清晰的图片。"));
+    }
+    return {true, text, OcrError::None, QStringLiteral("识别完成。")};
 }
 
 }  // namespace
 
-OcrRequest TesseractOcrEngine::resolvedRequest(const OcrRequest& request,
-                                                const QString& applicationDirPath)
+OcrRequest PaddleOcrEngine::resolvedRequest(const OcrRequest& request,
+                                             const QString& applicationDirPath)
 {
     OcrRequest resolved = request;
     const QString effectiveApplicationDir = applicationDirPath.trimmed().isEmpty()
@@ -127,32 +192,31 @@ OcrRequest TesseractOcrEngine::resolvedRequest(const OcrRequest& request,
         : applicationDirPath;
     const PackagedRuntime packaged = findPackagedRuntime(effectiveApplicationDir);
 
-    resolved.executable = request.executable.trimmed();
-    if (resolved.executable.isEmpty()) {
-        resolved.executable = qEnvironmentVariable("MINITREASUREBOX_TESSERACT").trimmed();
+    resolved.workerExecutable = request.workerExecutable.trimmed();
+    if (resolved.workerExecutable.isEmpty()) {
+        resolved.workerExecutable = qEnvironmentVariable(
+            "MINITREASUREBOX_PADDLEOCR_WORKER").trimmed();
     }
-    if (resolved.executable.isEmpty()) {
-        resolved.executable = packaged.executable;
-    }
-    if (resolved.executable.isEmpty()) {
-        resolved.executable = QStringLiteral("tesseract");
+    if (resolved.workerExecutable.isEmpty()) resolved.workerExecutable = packaged.executable;
+    if (resolved.workerExecutable.isEmpty()) {
+#ifdef Q_OS_WIN
+        resolved.workerExecutable = QStringLiteral("paddleocr-worker.exe");
+#else
+        resolved.workerExecutable = QStringLiteral("paddleocr-worker");
+#endif
     }
 
-    resolved.tessdataPath = request.tessdataPath.trimmed();
-    if (resolved.tessdataPath.isEmpty()) {
-        resolved.tessdataPath = qEnvironmentVariable("TESSDATA_PREFIX").trimmed();
+    resolved.modelPath = request.modelPath.trimmed();
+    if (resolved.modelPath.isEmpty()) {
+        resolved.modelPath = qEnvironmentVariable("MINITREASUREBOX_PADDLEOCR_MODELS").trimmed();
     }
-    if (resolved.tessdataPath.isEmpty()) {
-        resolved.tessdataPath = packaged.tessdataPath;
-    }
-    if (!resolved.tessdataPath.isEmpty()) {
-        resolved.tessdataPath = QDir::cleanPath(resolved.tessdataPath);
-    }
+    if (resolved.modelPath.isEmpty()) resolved.modelPath = packaged.modelPath;
+    if (!resolved.modelPath.isEmpty()) resolved.modelPath = QDir::cleanPath(resolved.modelPath);
     resolved.language = request.language.trimmed();
     return resolved;
 }
 
-OcrResult TesseractOcrEngine::validate(const OcrRequest& request)
+OcrResult PaddleOcrEngine::validate(const OcrRequest& request)
 {
     const OcrRequest resolved = resolvedRequest(request);
     if (resolved.timeoutMs <= 0) {
@@ -170,60 +234,59 @@ OcrResult TesseractOcrEngine::validate(const OcrRequest& request)
         return failure(OcrError::UnsupportedImage,
                        QStringLiteral("图片格式不受支持或文件已损坏。原文件未修改，请更换图片。"));
     }
-    static const QRegularExpression languagePattern(QStringLiteral("^[A-Za-z0-9_]+(?:\\+[A-Za-z0-9_]+)*$"));
-    if (!languagePattern.match(resolved.language).hasMatch()) {
+    if (resolved.language != QStringLiteral("ch")
+        && resolved.language != QStringLiteral("en")) {
         return failure(OcrError::InvalidInput,
-                       QStringLiteral("识别语言设置无效，请使用例如 chi_sim+eng 的语言代码。"));
+                       QStringLiteral("PaddleOCR 识别语言设置无效。"));
     }
-    if (resolvedExecutable(resolved.executable).isEmpty()) {
+    if (resolvedExecutable(resolved.workerExecutable).isEmpty()) {
         return failure(OcrError::RuntimeMissing,
-                       QStringLiteral("应用内置 OCR 组件缺失或损坏，请修复或重新安装应用。"));
+                       QStringLiteral("应用内置 PaddleOCR 组件缺失或损坏，请修复或重新安装应用。"));
     }
-    if (!languageFilesExist(resolved)) {
-        return failure(OcrError::LanguageDataMissing,
-                       QStringLiteral("应用内置 OCR 语言数据缺失或损坏，请修复或重新安装应用。"));
+    if (!modelFilesExist(resolved.modelPath)) {
+        return failure(OcrError::ModelDataMissing,
+                       QStringLiteral("应用内置 PaddleOCR 模型缺失或损坏，请修复或重新安装应用。"));
     }
     return {true, {}, OcrError::None, {}};
 }
 
-QStringList TesseractOcrEngine::argumentsFor(const OcrRequest& request)
+QStringList PaddleOcrEngine::argumentsFor(const OcrRequest& request)
 {
-    QStringList arguments{request.imagePath, QStringLiteral("stdout"),
-                          QStringLiteral("-l"), request.language.trimmed()};
-    if (!request.tessdataPath.trimmed().isEmpty()) {
-        arguments << QStringLiteral("--tessdata-dir")
-                  << QDir::cleanPath(request.tessdataPath.trimmed());
-    }
-    return arguments;
+    return {QStringLiteral("--models"), QDir::cleanPath(request.modelPath),
+            QStringLiteral("--image"), request.imagePath,
+            QStringLiteral("--language"), request.language};
 }
 
-OcrResult TesseractOcrEngine::recognize(const OcrRequest& request,
-                                        const std::atomic_bool* cancellation) const
+OcrResult PaddleOcrEngine::parseResponse(const QByteArray& output)
+{
+    return parseWorkerResponse(output);
+}
+
+OcrResult PaddleOcrEngine::recognize(const OcrRequest& request,
+                                     const std::atomic_bool* cancellation) const
 {
     if (cancellation && cancellation->load()) {
         return failure(OcrError::Cancelled, QStringLiteral("识别已取消。原图片未修改。"));
     }
     OcrRequest normalized = resolvedRequest(request);
     const OcrResult validation = validate(normalized);
-    if (!validation.ok) {
-        return validation;
-    }
+    if (!validation.ok) return validation;
 
-    normalized.imagePath = QFileInfo(normalized.imagePath.trimmed()).canonicalFilePath();
-    normalized.executable = resolvedExecutable(normalized.executable);
+    normalized.imagePath = QFileInfo(normalized.imagePath).canonicalFilePath();
+    normalized.workerExecutable = resolvedExecutable(normalized.workerExecutable);
+    normalized.modelPath = QDir(normalized.modelPath).canonicalPath();
 
     QProcess process;
     process.setProcessChannelMode(QProcess::SeparateChannels);
-    process.setProgram(normalized.executable);
+    process.setStandardErrorFile(QProcess::nullDevice());
+    process.setProgram(normalized.workerExecutable);
     process.setArguments(argumentsFor(normalized));
     process.start(QIODevice::ReadOnly);
 
     QElapsedTimer elapsed;
     elapsed.start();
     while (process.state() == QProcess::Starting) {
-        if (process.waitForStarted(20)) {
-            break;
-        }
+        if (process.waitForStarted(20)) break;
         if (cancellation && cancellation->load()) {
             process.kill();
             process.waitForFinished(1000);
@@ -233,20 +296,20 @@ OcrResult TesseractOcrEngine::recognize(const OcrRequest& request,
             process.kill();
             process.waitForFinished(1000);
             return failure(OcrError::TimedOut,
-                           QStringLiteral("本地 OCR 启动超时。原图片未修改，可以稍后重试。"));
+                           QStringLiteral("本地 PaddleOCR 启动超时。原图片未修改，可以稍后重试。"));
         }
         if (process.error() == QProcess::FailedToStart) {
             return failure(OcrError::RuntimeMissing,
-                           QStringLiteral("应用内置 OCR 组件无法启动，请修复或重新安装应用。"));
+                           QStringLiteral("应用内置 PaddleOCR 组件无法启动，请修复或重新安装应用。"));
         }
     }
-    if (process.state() == QProcess::NotRunning && process.error() == QProcess::FailedToStart) {
+    if (process.state() == QProcess::NotRunning
+        && process.error() == QProcess::FailedToStart) {
         return failure(OcrError::RuntimeMissing,
-                       QStringLiteral("应用内置 OCR 组件无法启动，请修复或重新安装应用。"));
+                       QStringLiteral("应用内置 PaddleOCR 组件无法启动，请修复或重新安装应用。"));
     }
 
     QByteArray standardOutput;
-    QByteArray standardError;
     while (process.state() != QProcess::NotRunning) {
         if (cancellation && cancellation->load()) {
             process.kill();
@@ -257,31 +320,25 @@ OcrResult TesseractOcrEngine::recognize(const OcrRequest& request,
             process.kill();
             process.waitForFinished(1000);
             return failure(OcrError::TimedOut,
-                           QStringLiteral("本地 OCR 识别超时。原图片未修改，可以稍后重试。"));
+                           QStringLiteral("本地 PaddleOCR 识别超时。原图片未修改，可以稍后重试。"));
         }
         process.waitForFinished(20);
-        standardOutput.append(process.readAllStandardOutput());
-        standardError.append(process.readAllStandardError());
+        appendCapped(standardOutput, process.readAllStandardOutput());
         QThread::yieldCurrentThread();
     }
-    standardOutput.append(process.readAllStandardOutput());
-    standardError.append(process.readAllStandardError());
+    appendCapped(standardOutput, process.readAllStandardOutput());
 
-    if (reportsMissingLanguageData(standardError)) {
-        return failure(OcrError::LanguageDataMissing,
-                       QStringLiteral("应用内置 OCR 语言数据无法加载，请修复或重新安装应用。"));
+    if (standardOutput.trimmed().isEmpty()) {
+        return failure(OcrError::ProcessFailed,
+                       QStringLiteral("本地 PaddleOCR 组件未返回结果。原图片未修改，请稍后重试。"));
     }
+    const OcrResult response = parseResponse(standardOutput);
+    if (!response.ok) return response;
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
         return failure(OcrError::ProcessFailed,
-                       QStringLiteral("本地 OCR 处理失败。原图片未修改，请稍后重试。"));
+                       QStringLiteral("本地 PaddleOCR 进程异常退出。原图片未修改，请稍后重试。"));
     }
-
-    const QString text = QString::fromUtf8(standardOutput).trimmed();
-    if (text.isEmpty()) {
-        return failure(OcrError::EmptyOutput,
-                       QStringLiteral("识别完成但没有检测到文字。请尝试更清晰的图片或其他语言模型。"));
-    }
-    return {true, text, OcrError::None, QStringLiteral("识别完成。")};
+    return response;
 }
 
 }  // namespace mtb::ocr

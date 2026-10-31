@@ -2,19 +2,24 @@
 
 #include "ai/ocr/ocr_engine.h"
 
+#include <QImage>
 #include <QTemporaryDir>
 #include <QWidget>
 
-#include <atomic>
-#include <memory>
-
 class QComboBox;
 class QLabel;
+class QProgressBar;
 class QPushButton;
+class QResizeEvent;
 class QTextEdit;
-class QThread;
+
+namespace mtb::ui {
+class ToolStatusStrip;
+}
 
 namespace mtb::ocr {
+
+class OcrProcessTask;
 
 class OcrWidget final : public QWidget {
     Q_OBJECT
@@ -33,10 +38,12 @@ public:
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     void chooseImage();
     void chooseExportPath();
+    void updatePreview();
     void setBusy(bool busy);
     void invalidateResult();
     void finishRecognition(quint64 taskId, const OcrResult& result);
@@ -44,8 +51,10 @@ private:
     [[nodiscard]] OcrRequest request() const;
 
     QString imagePath_;
+    QImage previewImage_;
     QTemporaryDir clipboardDirectory_;
     QLabel* preview_;
+    QLabel* sourceInfo_;
     QLabel* status_;
     QComboBox* language_;
     QTextEdit* result_;
@@ -54,8 +63,9 @@ private:
     QPushButton* retryButton_;
     QPushButton* copyButton_;
     QPushButton* exportButton_;
-    QThread* workerThread_{nullptr};
-    std::shared_ptr<std::atomic_bool> cancellation_;
+    QProgressBar* progress_;
+    mtb::ui::ToolStatusStrip* statusStrip_;
+    OcrProcessTask* processTask_{nullptr};
     quint64 taskId_{0};
     bool resultValid_{false};
 };

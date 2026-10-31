@@ -29,7 +29,7 @@
 初期 UI：Qt Widgets
 游戏音频：Qt Multimedia（QMediaPlayer + QAudioOutput）
 图像处理：OpenCV
-模型推理：第一阶段 Python/PyTorch 子进程，后续 ONNX Runtime C++
+模型推理：PaddleOCR Worker + ONNX Runtime；其他 AI 能力按需使用本地 C++ 或独立 Worker
 本地存储：SQLite + QSettings
 日志：Qt 日志接口 + 文件滚动日志
 测试：Qt Test、GoogleTest 或 Catch2
@@ -338,6 +338,14 @@ PyTorch 模型
 ```
 
 阶段二可以减少 Python 环境依赖，更适合正式桌面分发。模型导出前必须验证算子兼容性、CPU/GPU 输出一致性和不同分辨率表现。
+
+### 8.3 当前 OCR 后端
+
+当前 OCR 使用 `PaddleOcrEngine` 启动安装包内的独立 PaddleOCR Worker。Worker 由 PaddleOCR 3.7、PaddleX OCR Core 3.7、ONNX Runtime 1.31 和 Python 3.12 通过 PyInstaller 在目标平台原生构建，使用 PP-OCRv5 Mobile 检测模型与统一中英文识别模型。C++ 通过命令行参数传入图片和模型目录。Worker 启动时复制一个专用协议文件描述符，随后丢弃 Python 与原生依赖的 stdout/stderr，只通过该描述符返回一个 UTF-8 JSON 对象，防止第三方日志阻塞管道或污染识别结果。
+
+发布构建必须调用 `scripts/build_paddleocr_runtime.py`。该脚本安装固定版本依赖，从官方地址下载模型并校验仓库内固定的 SHA-256，构建独立 Worker，复制模型和许可证，然后执行 `--self-test`。Windows、macOS Intel 和 Apple Silicon 分别在原生 CI runner 上生成运行时。CMake 在打包前要求 Worker、PyInstaller `_internal` 目录、两个模型的 `inference.onnx`/`inference.yml` 和第三方清单全部存在。配置 `MINITREASUREBOX_OCR_RUNTIME_ROOT` 后，CMake 默认把同一运行时复制到构建目录的 `ocr-runtime`，让开发构建与安装包通过相同的相对路径解析逻辑运行；可以使用 `MINITREASUREBOX_STAGE_BUNDLED_OCR_FOR_BUILD=OFF` 关闭开发部署。
+
+运行时解析顺序为请求显式路径、`MINITREASUREBOX_PADDLEOCR_WORKER`/`MINITREASUREBOX_PADDLEOCR_MODELS` 开发覆盖、安装包内 `ocr-runtime`。发布包不回退到系统 Python，不在运行时联网或下载模型。每次识别使用独立进程；OCR 页面通过异步 `QProcess` 读取有 1 MiB 上限的协议输出，将依赖诊断通道直接重定向到系统空设备，并由独立 `QTimer` 执行 120 秒硬超时。协议解析只扫描最后一个 JSON 对象且以线性方式过滤 NUL 字节，避免噪声输出导致 GUI 线程二次复杂度解析。取消操作直接终止 Worker，页面关闭时不再无限等待后台线程。
 
 ## 9. 试卷去手写技术方案
 

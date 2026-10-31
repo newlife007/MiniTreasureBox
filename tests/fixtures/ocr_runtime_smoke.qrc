@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/fixtures">
+        <file alias="paddleocr-smoke.png">paddleocr-smoke.png</file>
+    </qresource>
+</RCC>

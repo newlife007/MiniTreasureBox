@@ -46,10 +46,38 @@ LD_LIBRARY_PATH=/projects/sandbox/Qt/6.8.3/gcc_64/lib:/projects/sandbox/.qt-sysr
   ./build/MiniTreasureBox
 ```
 
+## OCR 运行时
+
+OCR 使用 PaddleOCR 3.7、PaddleX OCR Core 和 ONNX Runtime，随发布安装包内置 PP-OCRv5 Mobile 检测及中英文识别模型。应用不会调用系统 Python，也不会在安装后下载模型。
+
+配置 `MINITREASUREBOX_OCR_RUNTIME_ROOT` 后，普通构建会把已验证的运行时部署到构建目录的 `ocr-runtime`，因此可以直接启动构建产物测试 OCR。可用 `-DMINITREASUREBOX_STAGE_BUNDLED_OCR_FOR_BUILD=OFF` 关闭该部署。未配置内置运行时时，也可以通过以下环境变量使用本地 Worker：
+
+```text
+MINITREASUREBOX_PADDLEOCR_WORKER=<paddleocr-worker 可执行文件>
+MINITREASUREBOX_PADDLEOCR_MODELS=<包含两个 PP-OCRv5 模型目录的路径>
+```
+
+发布构建先在目标平台生成独立运行时：
+
+```bash
+python scripts/build_paddleocr_runtime.py \
+  --output build/ocr-runtime-staged \
+  --work build/ocr-runtime-build
+cmake -S . -B build-package \
+  -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON \
+  -DMINITREASUREBOX_OCR_RUNTIME_ROOT="$PWD/build/ocr-runtime-staged"
+cmake --build build-package --config Release --parallel
+```
+
+构建脚本会固定 Python 依赖版本、对官方模型归档执行 SHA-256 校验、运行 PaddleOCR Worker 自检，并收集第三方许可证清单。Windows、macOS Intel 和 Apple Silicon 安装包均通过原生 CI 构建 Worker。
+
 ## 项目文档
 
 - [产品文档](docs/product/product-requirements.md)
 - [技术文档](docs/technical/technical-design.md)
+- [整体 UI 设计方案](docs/design/ui-design-plan.md)
+- [非游戏小工具 UI 设计规范](docs/design/tool-ui-style-guide.md)
+- [小游戏 UI 设计规范](docs/design/game-ui-style-guide.md)
 
 技术方案采用 Qt 6、C++ 和 CMake，AI 推理基于 ONNX Runtime C++。
 
