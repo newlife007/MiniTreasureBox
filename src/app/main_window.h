@@ -28,6 +28,7 @@ protected:
 
 private:
     void buildNavigation();
+    void setPracticalSubcategoriesVisible(bool visible);
     QWidget* createSettingsPage();
     void handleNavigation(QListWidgetItem* item);
     void openTool(const QString& toolId);

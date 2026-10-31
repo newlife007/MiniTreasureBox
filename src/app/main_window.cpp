@@ -29,6 +29,7 @@ namespace mtb {
 namespace {
 constexpr int kViewRole = Qt::UserRole;
 constexpr int kCategoryRole = Qt::UserRole + 1;
+constexpr int kPracticalSubcategoryRole = Qt::UserRole + 2;
 
 QListWidgetItem* addNavigationItem(QListWidget* list, const QString& text,
                                    const QString& view, const QVariant& category = {})
@@ -245,6 +246,7 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
     connect(searchShortcut, &QShortcut::activated, this, [this] {
         pages_->setCurrentWidget(homePage_);
         navigation_->setCurrentRow(0);
+        setPracticalSubcategoriesVisible(false);
         homePage_->showHome();
         homePage_->focusSearch();
     });
@@ -257,10 +259,12 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
             homePage_->clearSearch();
             homePage_->showHome();
             navigation_->setCurrentRow(0);
+            setPracticalSubcategoriesVisible(false);
         } else {
             pages_->setCurrentWidget(homePage_);
             homePage_->showHome();
             navigation_->setCurrentRow(0);
+            setPracticalSubcategoriesVisible(false);
         }
     });
 
@@ -304,16 +308,28 @@ void MainWindow::buildNavigation()
                       tr("AI 工具"));
     addNavigationItem(navigation_, tr("实用工具"), QStringLiteral("categories"),
                       categories);
+    for (const QString& category : categories) {
+        auto* item = addNavigationItem(navigation_, QStringLiteral("  %1").arg(category),
+                                       QStringLiteral("category"), category);
+        item->setData(kPracticalSubcategoryRole, true);
+        item->setHidden(true);
+    }
     addNavigationItem(navigation_, tr("小游戏"), QStringLiteral("category"),
                       tr("小游戏"));
-    for (const QString& category : categories) {
-        addNavigationItem(navigation_, QStringLiteral("  %1").arg(category),
-                          QStringLiteral("category"), category);
-    }
 
     addNavigationItem(navigation_, tr("收藏"), QStringLiteral("favorites"));
     addNavigationItem(navigation_, tr("最近使用"), QStringLiteral("recent"));
     addNavigationItem(navigation_, tr("设置"), QStringLiteral("settings"));
+}
+
+void MainWindow::setPracticalSubcategoriesVisible(bool visible)
+{
+    for (int row = 0; row < navigation_->count(); ++row) {
+        auto* item = navigation_->item(row);
+        if (item->data(kPracticalSubcategoryRole).toBool()) {
+            item->setHidden(!visible);
+        }
+    }
 }
 
 QWidget* MainWindow::createSettingsPage()
@@ -358,6 +374,9 @@ QWidget* MainWindow::createSettingsPage()
 void MainWindow::handleNavigation(QListWidgetItem* item)
 {
     const QString view = item->data(kViewRole).toString();
+    const bool showPracticalSubcategories = view == QStringLiteral("categories")
+        || item->data(kPracticalSubcategoryRole).toBool();
+    setPracticalSubcategoriesVisible(showPracticalSubcategories);
     if (view == QStringLiteral("settings")) {
         pages_->setCurrentWidget(settingsPage_);
         return;

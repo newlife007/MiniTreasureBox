@@ -128,13 +128,37 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QVERIFY(heading);
 
     QListWidgetItem* practical = itemWithText(navigation, QStringLiteral("实用工具"));
+    QListWidgetItem* games = itemWithText(navigation, QStringLiteral("小游戏"));
     QVERIFY(practical);
+    QVERIFY(games);
+    const QStringList subcategoryNames{QStringLiteral("开发工具"),
+                                       QStringLiteral("文本工具"),
+                                       QStringLiteral("时间工具"),
+                                       QStringLiteral("编码转换")};
+    QList<QListWidgetItem*> subcategories;
+    for (const QString& name : subcategoryNames) {
+        auto* item = itemWithText(navigation, name);
+        QVERIFY(item);
+        QVERIFY(item->isHidden());
+        QVERIFY(navigation->row(item) > navigation->row(practical));
+        QVERIFY(navigation->row(item) < navigation->row(games));
+        subcategories.append(item);
+    }
+    QListWidgetItem* development = itemWithText(navigation, QStringLiteral("开发工具"));
+    QVERIFY(development);
+
     clickItem(navigation, practical);
+    for (QListWidgetItem* item : subcategories) {
+        QVERIFY(!item->isHidden());
+    }
     QCOMPARE(grid->cardCount(), 6);
 
     QListWidgetItem* favorites = itemWithText(navigation, QStringLiteral("收藏"));
     QVERIFY(favorites);
     clickItem(navigation, favorites);
+    for (QListWidgetItem* item : subcategories) {
+        QVERIFY(item->isHidden());
+    }
     QCOMPARE(grid->toolIds(), QStringList{QStringLiteral("json-formatter")});
 
     ToolCard* favoriteTool = grid->cardForTool(QStringLiteral("json-formatter"));
@@ -161,8 +185,7 @@ void ShellInteractionsTest::practicalNavigationShortcutsRecentsAndTheme()
     QVERIFY(!grid->toolIds().contains(QStringLiteral("base64-codec")));
     QVERIFY(pages->currentWidget()->objectName() != QStringLiteral("toolPage_json-formatter"));
 
-    QListWidgetItem* development = itemWithText(navigation, QStringLiteral("开发工具"));
-    QVERIFY(development);
+    clickItem(navigation, practical);
     clickItem(navigation, development);
     QCOMPARE(grid->toolIds(),
              QStringList({QStringLiteral("json-formatter"),

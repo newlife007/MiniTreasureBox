@@ -164,19 +164,25 @@ void LocalFileSearchTest::rejectsInvalidRootsSymlinksAndCancellation()
         root.filePath(QStringLiteral("actual")), directoryLink);
     const bool fileLinkCreated = QFile::link(
         root.filePath(QStringLiteral("actual/inside.txt")), fileLink);
+    // QFile::link() creates a hard link on Windows. Only enforce the symlink
+    // exclusion assertions when the platform reports an actual symlink.
+    const bool directorySymlinkCreated = directoryLinkCreated
+        && QFileInfo(directoryLink).isSymLink();
+    const bool fileSymlinkCreated = fileLinkCreated
+        && QFileInfo(fileLink).isSymLink();
 
     const auto built = LocalFileSearch::buildIndex(temporary.path());
     QVERIFY(built.success);
     const QStringList paths = resultPaths(
         LocalFileSearch::search(built.index, QStringLiteral("inside")));
     QCOMPARE(paths, QStringList{root.filePath(QStringLiteral("actual/inside.txt"))});
-    if (directoryLinkCreated) {
+    if (directorySymlinkCreated) {
         QVERIFY(std::none_of(built.index.records.cbegin(), built.index.records.cend(),
                              [&directoryLink](const auto& record) {
                                  return record.path.startsWith(directoryLink);
                              }));
     }
-    if (fileLinkCreated) {
+    if (fileSymlinkCreated) {
         QVERIFY(std::none_of(built.index.records.cbegin(), built.index.records.cend(),
                              [&fileLink](const auto& record) {
                                  return record.path == fileLink;

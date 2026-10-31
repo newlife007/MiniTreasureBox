@@ -77,7 +77,7 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     layout->addWidget(subtitle_);
     layout->addSpacing(10);
     layout->addWidget(searchSurface);
-    layout->addWidget(resultState_);
+    layout->addWidget(resultState_, 1);
     layout->addWidget(toolGrid_, 1);
     layout->addWidget(localFileSearch_, 1);
     layout->addWidget(privacyHint);
