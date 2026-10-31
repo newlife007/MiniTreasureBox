@@ -136,7 +136,7 @@ void registerBuiltinTools(ToolRegistry& registry)
         {QStringLiteral("exam-restoration"),
          QStringLiteral("试卷复原小工具"),
          QStringLiteral("AI 工具"),
-         QStringLiteral("使用保守的本地图像基线提出手写 Mask，并支持人工修正和背景填充。"),
+         QStringLiteral("导入已填写试卷后立即在本机自动还原，并支持检查和修正 Mask。"),
          {QStringLiteral("试卷复原"), QStringLiteral("去手写"), QStringLiteral("mask"),
           QStringLiteral("handwriting"), QStringLiteral("exam restoration")},
          {QStringLiteral("Handwriting removal"), QStringLiteral("试卷去手写")},

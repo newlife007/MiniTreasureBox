@@ -1,9 +1,9 @@
 # 试卷照片自动还原方案
 
 - 对应需求：[Issue #26](https://github.com/newlife007/MiniTreasureBox/issues/26)
-- 文档状态：待维护者评审的方案，不代表已实现
+- 文档状态：实施状态与后续生产模型门禁记录
 - 调研访问日期：2026-10-31
-- 本次提交范围：仅文档，不包含应用、模型、数据集、训练、打包、测试或 CI 改动
+- 当前实现范围：本地 Worker 协议、确定性分块处理、零额外操作 UI、基础模式回退、独立训练工作区、端到端假 Worker 测试，以及默认关闭的严格发布供应链
 
 ## 1. 结论
 
@@ -40,16 +40,18 @@
 
 ## 3. 当前实现与差距
 
-现有工具由 `src/domain/tools/builtin_tools.cpp` 以 `exam-restoration` 注册，并由 `createHandwritingRemovalWidget` 创建。`src/ai/handwriting_removal/removal_engine.*` 已提供可注入的 `IHandwritingRemovalEngine`；`src/ai/handwriting_removal/removal_widget.*` 已有 `QThread` 后台执行、线程中断、task ID 陈旧结果保护、可编辑 `MaskDocument`、可选参数和原子 PNG 导出。这些边界应保留。
+工具继续由 `src/domain/tools/builtin_tools.cpp` 以 `exam-restoration` 注册，并通过可注入的 `IHandwritingRemovalEngine` 保持 UI、规则基线与 Worker 集成分离。当前已经实现：
 
-当前能力离需求还有以下差距：
+- 导入或拖入图片后自动提交，不需要先点击“自动 Mask”；处理中显示“校正方向”“校正文档”“识别手写”“还原纸面”、总体进度和取消入口，成功后自动打开结果。
+- `RestorationWorkerEngine` 使用独立本地进程、固定 schema 和 request ID、1 MiB 协议上限、120 秒超时、task ID 陈旧结果保护及逐任务临时目录。运行时不可用、自检失败、崩溃或协议错误时回退 `BaselineHandwritingRemovalEngine` 并明确标为“基础模式”。
+- `scripts/exam_restoration_worker.py` 固定背景、手写、印刷三类映射以及 1024 像素瓦片和 128 像素重叠，执行与遍历顺序无关的整数加权融合。最终输出只在接受 Mask 内写入，Mask 外逐像素复制校正输入。
+- `ml/exam_restoration/` 提供独立训练、评测和 ONNX 导出骨架。私有数据、checkpoint、ONNX 及评测输出均被忽略；仓库没有复制 HandWritingEraser 数据、checkpoint 或实现制品。
+- 假 Worker 端到端测试覆盖注册表导航、自动处理、生产运行时解析、协议、结果和 Mask 应用及 PNG 导出。规则基线、协议错误、超时、取消、崩溃、尺寸上限和临时清理均有自动化覆盖。
+- 独立发布构建器要求完整权利元数据、不可变 HTTPS URL、精确字节数与 SHA-256，并收集模型及 Python 依赖许可证、生成 PyInstaller Worker 和保存自检元数据。CMake 可独立要求、部署和安装该运行时。
 
-- `BaselineHandwritingRemovalEngine` 使用确定性的颜色和对比度规则，主要识别彩色墨迹，黑色或铅笔手写与印刷文字难以区分。
-- 被 Mask 覆盖的区域使用附近浅色纸面局部填充，不能理解印刷字、横线、表格和复杂背景。
-- 首次导入后还需要用户点击“自动 Mask”，不满足导入即自动完成。
-- 没有方向分类、页面边界检测、透视校正或弯曲展开模型。
-- 没有训练过的印刷 / 手写 / 背景三分类模型，也没有受控的模型清单和发布权重。
-- 现有 Inspector 和 Mask 编辑很适合作为失败时的可选兜底，不应被自动流程删除。
+生产模型仍未获批。`packaging/exam-restoration-models.json` 的 `artifacts` 当前为空，因此发布工作流默认不构建或安装生产还原运行时。HandWritingEraser 外链 checkpoint 的独立来源、实际架构、精确字节数、SHA-256、许可证文本及再分发批准仍未建立，H0 至 H4 也没有质量、ONNX、CPU 性能、可靠性、隐私、包体和三个原生平台的证据。当前实现只证明协议、确定性算法、基础模式和假运行时集成有效，不证明生产模型质量。
+
+仍待生产门禁完成的能力包括获批三分类权重、实测方向和几何校正模型，以及第 6 节全部质量与平台指标。任何缺口都不能通过填写推测元数据、降低门禁或把基础模式称为 AI 结果来绕过。
 
 ## 4. 开源方案调研
 
@@ -191,7 +193,7 @@ SCUT-EnsExam 只能在单独、获批的研究环境中作为外部参考，不�
 
 ## 7. H4 选择 retrain 后的独立训练预案
 
-只有 H4 选择 **retrain**，即维护者已批准方案，且直接开源权重因质量、许可或打包任一门禁失败后，才新增以下工作区。本次提交不创建它。训练预案只继承 H0 至 H2 验证有效的 HandWritingEraser **三分类任务定义**和**全分辨率重叠切块方向**；不复制其权利未核验的数据、checkpoint、临时文件推理方式或未经验证的实现细节。模型结构、数据管线、融合、评测和导出在本项目中独立、可复现地实现：
+独立训练工作区已经按以下结构建立，用于在 H4 选择 **retrain** 且合法数据获批后执行训练。当前仅包含结构、数据许可校验、确定性划分、模型与导出入口、生成夹具测试和模型卡模板，不包含真实数据、checkpoint、ONNX 或训练结果。训练预案只继承 HandWritingEraser **三分类任务定义**和**全分辨率重叠切块方向**；没有复制其权利未核验的数据、checkpoint、临时文件推理方式或未经验证的实现细节。
 
 ```text
 ml/exam_restoration/
@@ -301,10 +303,12 @@ Windows、macOS Intel 和 Apple Silicon 原生构建 Worker，校验固定 SHA-2
 6. 空白原卷对齐是否进入首个实现版本。
 7. 若开源候选失败，是否批准创建 `ml/exam_restoration/` 并启动训练。
 
-在这些决定和 Spike 结果获批前，不应添加模型、数据、训练代码、运行时依赖、打包流程、应用实现、测试或 CI。本提交只记录方案。
+在生产模型进入发布清单前，以上决定和 Spike 证据仍须完成。协议、UI、基础模式、独立训练骨架和供应链验证可以继续由生成夹具测试，但不得把权利或质量证据不完整的模型加入发布包。
 
-## 10. 本次验证说明
+## 10. 实施验证状态
 
-本次是纯文档变更。文档结构检查发现 23 个 Markdown 链接和 28 个唯一标题，所需固定提交、MIT 许可证、DeepLabV3+ 论文、VainF 上游实现以及 checkpoint / 数据集外部页面均已引用；上述关键外链在验证时返回 HTTP 200。`python3 -m unittest tests.unit.test_build_paddleocr_runtime` 运行 4 项测试并通过，`git diff --check` 通过，变更范围检查只列出 `docs/technical/exam-restoration-solution.md`。
+当前 Linux 开发验证使用 Qt 6.8.3，覆盖完整 CMake 构建、Python 单元测试、CTest、`git diff --check`，以及从工具注册表进入、导入图片、自动启动假 Worker、解析协议、应用结果与 Mask、切换结果视图和导出 PNG 的端到端测试。
 
-按要求执行了 CMake 配置命令，但沙箱不存在 `/projects/sandbox/Qt/6.8.3/gcc_64`、`/projects/sandbox/.qt-sysroot/usr` 或系统 Qt 6，CMake 在 `CMakeLists.txt:12` 无法找到 `Qt6Config.cmake` / `qt6-config.cmake` 并退出。配置未完成，因此 C++ build 和 CTest 均不可用、没有被执行，也没有被宣称通过。没有 Dockerfile 可供镜像验证。
+发布供应链回归测试覆盖完整清单、非 HTTPS URL、缺失权利字段、字节数或 SHA-256 不匹配后的临时文件清理、精确许可证文本部署和 Worker 自检响应。CMake 在启用 `REQUIRE_BUNDLED_EXAM_RESTORATION` 时检查独立运行时中的 Worker、PyInstaller 依赖、模型、许可证清单和 `SELF_TEST.json`，并重新计算模型字节数及 SHA-256。发布工作流定义了 Windows x64、macOS Intel 和 macOS Apple Silicon 的原生构建、安装、自检、受限 `PATH` 下的生产解析以及移除检查。
+
+这些原生发布分支只有严格清单返回 `enabled` 时才执行。当前清单返回 `disabled`，原因是没有获批生产模型。没有运行或宣称通过 H0 至 H4 的真实模型质量、ONNX 一致性、CPU 性能、可靠性、隐私、包体或三个发布平台证据。该证据缺口是生产模型发布的非重试性门禁，必须由合法来源、权利批准和实测材料解决，不能由软件重试或假 Worker 测试消除。

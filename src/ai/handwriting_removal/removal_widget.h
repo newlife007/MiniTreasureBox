@@ -51,6 +51,7 @@ private:
     void chooseExportPath();
     void finishAutomatic(quint64 taskId, const RemovalResult& result);
     void finishResult(quint64 taskId, const RemovalResult& result);
+    void updateAutomaticProgress(quint64 taskId, const RemovalProgress& progress);
     void refreshResult();
     void cancelResultProcessing();
     void trackWorker(QThread* thread);
@@ -81,6 +82,7 @@ private:
     quint64 resultTaskId_{0};
     int compareViewIndex_{1};
     bool automaticCancellationRequested_{false};
+    bool automaticRestartPending_{false};
     bool resultPending_{false};
     bool resultValid_{false};
 };

@@ -15,6 +15,7 @@
 #include <QLabel>
 #include <QListWidget>
 #include <QMimeData>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSettings>
 #include <QSlider>
@@ -24,16 +25,24 @@
 #include <QTest>
 #include <QUrl>
 
+#include <atomic>
+#include <chrono>
+#include <thread>
+
 using namespace mtb;
 using namespace mtb::handwriting;
 
 namespace {
 
-QString createPage(QTemporaryDir& directory, const QString& name)
+QString createPage(QTemporaryDir& directory, const QString& name,
+                   QSize size = QSize(80, 60), QColor ink = QColor(25, 70, 190))
 {
-    QImage image(80, 60, QImage::Format_RGB32);
+    QImage image(size, QImage::Format_RGB32);
     image.fill(QColor(248, 246, 240));
-    for (int x = 20; x < 60; ++x) image.setPixelColor(x, 30, QColor(25, 70, 190));
+    const int y = size.height() / 2;
+    for (int x = size.width() / 4; x < size.width() * 3 / 4; ++x) {
+        image.setPixelColor(x, y, ink);
+    }
     const QString path = directory.filePath(name);
     return image.save(path, "PNG") ? path : QString();
 }
@@ -84,6 +93,94 @@ public:
     }
 };
 
+class ProgressiveEngine final : public IHandwritingRemovalEngine {
+public:
+    ProgressiveEngine(ConfidenceLevel confidence = ConfidenceLevel::High,
+                      ExecutionMode mode = ExecutionMode::OfflineModel,
+                      int stageDelayMs = 35,
+                      bool respectCancellation = true)
+        : confidence_(confidence), mode_(mode), stageDelayMs_(stageDelayMs),
+          respectCancellation_(respectCancellation)
+    {
+    }
+
+    RemovalResult detectAndRemove(const QImage& image, const RemovalOptions& options,
+                                  const CancellationCheck& cancelled) const override
+    {
+        return run(image, options, {}, cancelled);
+    }
+
+    RemovalResult detectAndRemoveWithProgress(
+        const QImage& image, const RemovalOptions& options,
+        const ProgressCallback& progress,
+        const CancellationCheck& cancelled) const override
+    {
+        return run(image, options, progress, cancelled);
+    }
+
+    RemovalResult removeWithMask(const QImage& image, const QImage& mask,
+                                 const RemovalOptions&,
+                                 const CancellationCheck& cancelled) const override
+    {
+        if (cancelled && cancelled()) {
+            return {false, {}, {}, RemovalError::Cancelled, QStringLiteral("cancelled")};
+        }
+        return {true, mask.copy(), image.copy(), RemovalError::None,
+                QStringLiteral("updated")};
+    }
+
+    mutable std::atomic_int starts{0};
+    mutable std::atomic_int cancellations{0};
+
+private:
+    RemovalResult run(const QImage& image, const RemovalOptions&,
+                      const ProgressCallback& progress,
+                      const CancellationCheck& cancelled) const
+    {
+        ++starts;
+        const QList<QPair<ProcessingStage, int>> stages{
+            {ProcessingStage::Validating, 5},
+            {ProcessingStage::Initializing, 25},
+            {ProcessingStage::Segmenting, 55},
+            {ProcessingStage::Restoring, 90},
+        };
+        for (const auto& [stage, percent] : stages) {
+            if (progress) progress({QStringLiteral("fixture"), stage, percent});
+            const int waits = qMax(1, stageDelayMs_ / 5);
+            for (int i = 0; i < waits; ++i) {
+                if (respectCancellation_ && cancelled && cancelled()) {
+                    ++cancellations;
+                    return {false, {}, {}, RemovalError::Cancelled,
+                            QStringLiteral("cancelled")};
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        if (respectCancellation_ && cancelled && cancelled()) {
+            ++cancellations;
+            return {false, {}, {}, RemovalError::Cancelled, QStringLiteral("cancelled")};
+        }
+        QImage mask(image.size(), QImage::Format_Grayscale8);
+        mask.fill(0);
+        mask.scanLine(image.height() / 2)[image.width() / 2] = 255;
+        QImage restored = image.copy();
+        restored.setPixelColor(image.width() / 2, image.height() / 2,
+                               QColor(255, 255, 255));
+        RemovalResult result{true, mask, restored, RemovalError::None,
+                             QStringLiteral("fixture complete")};
+        result.metadata.executionMode = mode_;
+        result.metadata.confidence = confidence_;
+        result.metadata.confidenceReasons = {QStringLiteral("纸面边界清晰")};
+        if (progress) progress({QStringLiteral("fixture"), ProcessingStage::Completed, 100});
+        return result;
+    }
+
+    ConfidenceLevel confidence_;
+    ExecutionMode mode_;
+    int stageDelayMs_;
+    bool respectCancellation_;
+};
+
 }  // namespace
 
 class RemovalWidgetTest final : public QObject {
@@ -91,6 +188,10 @@ class RemovalWidgetTest final : public QObject {
 
 private slots:
     void importsProcessesEditsViewsAndExports();
+    void automaticProcessingShowsStagesWithoutClick();
+    void lowConfidenceAndBaselineRemainExportable();
+    void cancellationAndRapidReplacementRejectStaleResults();
+    void rejectsOverLimitInputBeforeEngineSubmission();
     void failedRegenerationKeepsStaleResultUnexportable();
     void productionSizeCanvasRendersAndEditsAtDisplayResolution();
     void acceptsLocalDropAndReportsInvalidInput();
@@ -111,6 +212,7 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     auto* view = widget.findChild<QComboBox*>(QStringLiteral("restorationViewSelector"));
     auto* automatic = widget.findChild<QPushButton*>(QStringLiteral("restorationAutoButton"));
     auto* clear = widget.findChild<QPushButton*>(QStringLiteral("restorationClearButton"));
+    auto* restart = widget.findChild<QPushButton*>(QStringLiteral("restorationRestartButton"));
     auto* undo = widget.findChild<QPushButton*>(QStringLiteral("restorationUndoButton"));
     auto* redo = widget.findChild<QPushButton*>(QStringLiteral("restorationRedoButton"));
     auto* exportButton = widget.findChild<QPushButton*>(QStringLiteral("restorationExportButton"));
@@ -122,6 +224,7 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(view);
     QVERIFY(automatic);
     QVERIFY(clear);
+    QVERIFY(restart);
     QVERIFY(undo);
     QVERIFY(redo);
     QVERIFY(exportButton);
@@ -132,12 +235,11 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
 
     QVERIFY(widget.importImage(path));
     const QImage original = widget.originalImage().copy();
-    QVERIFY(automatic->isEnabled());
-    widget.startAutomaticProcessing();
-    QVERIFY(status->text().contains(QStringLiteral("正在")));
     QTRY_VERIFY_WITH_TIMEOUT(!widget.resultImage().isNull()
                              && qGray(widget.maskImage().pixel(40, 30)) == 255, 3000);
     QTRY_VERIFY_WITH_TIMEOUT(automatic->isEnabled(), 3000);
+    QVERIFY(status->text().contains(QStringLiteral("基础模式")));
+    QCOMPARE(view->currentText(), QStringLiteral("结果"));
     QCOMPARE(widget.originalImage(), original);
 
     QCOMPARE(view->count(), 3);
@@ -193,6 +295,8 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(widget.maskImage() != editedMask);
     undo->click();
     QCOMPARE(widget.maskImage(), editedMask);
+    restart->click();
+    QCOMPARE(widget.maskImage(), automaticMask);
 
     const QString exportPath = directory.filePath(QStringLiteral("restored.png"));
     QTRY_VERIFY_WITH_TIMEOUT(exportButton->isEnabled(), 3000);
@@ -202,6 +306,145 @@ void RemovalWidgetTest::importsProcessesEditsViewsAndExports()
     QVERIFY(!exported.isNull());
     QCOMPARE(exported.size(), original.size());
     QCOMPARE(widget.originalImage(), original);
+}
+
+void RemovalWidgetTest::automaticProcessingShowsStagesWithoutClick()
+{
+    QTemporaryDir directory;
+    const QString path = createPage(directory, QStringLiteral("stages.png"));
+    auto engine = std::make_shared<ProgressiveEngine>(
+        ConfidenceLevel::High, ExecutionMode::OfflineModel, 90);
+    HandwritingRemovalWidget widget(nullptr, engine);
+    widget.show();
+    auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+    auto* progress = widget.findChild<QProgressBar*>(QStringLiteral("restorationProgress"));
+    auto* cancel = widget.findChild<QPushButton*>(QStringLiteral("restorationCancelButton"));
+    auto* view = widget.findChild<QComboBox*>(QStringLiteral("restorationViewSelector"));
+    QVERIFY(status);
+    QVERIFY(progress);
+    QVERIFY(cancel);
+    QVERIFY(view);
+
+    QVERIFY(widget.importImage(path));
+    QTRY_COMPARE_WITH_TIMEOUT(engine->starts.load(), 1, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("校正方向")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("校正文档")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("识别手写")), 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("还原纸面")), 1000);
+    QVERIFY(cancel->isEnabled());
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("高置信度")), 2000);
+    QCOMPARE(progress->value(), 100);
+    QCOMPARE(view->currentText(), QStringLiteral("结果"));
+    QCOMPARE(engine->starts.load(), 1);
+    auto* automatic = widget.findChild<QPushButton*>(QStringLiteral("restorationAutoButton"));
+    QVERIFY(automatic);
+    automatic->click();
+    QTRY_COMPARE_WITH_TIMEOUT(engine->starts.load(), 2, 1000);
+    QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("高置信度")), 2000);
+}
+
+void RemovalWidgetTest::lowConfidenceAndBaselineRemainExportable()
+{
+    QTemporaryDir directory;
+    const QString path = createPage(directory, QStringLiteral("confidence.png"));
+    QVERIFY(!path.isEmpty());
+
+    {
+        auto engine = std::make_shared<ProgressiveEngine>(
+            ConfidenceLevel::Low, ExecutionMode::OfflineModel, 5);
+        HandwritingRemovalWidget widget(nullptr, engine);
+        widget.show();
+        QVERIFY(widget.importImage(path));
+        auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+        auto* exportButton = widget.findChild<QPushButton*>(
+            QStringLiteral("restorationExportButton"));
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("低置信度")), 2000);
+        QVERIFY(status->text().contains(QStringLiteral("Mask")));
+        QVERIFY(status->text().contains(QStringLiteral("原图")));
+        QTRY_VERIFY_WITH_TIMEOUT(exportButton->isEnabled(), 2000);
+        QString error;
+        QVERIFY(widget.exportPng(directory.filePath(QStringLiteral("low.png")), &error));
+    }
+
+    {
+        auto engine = std::make_shared<ProgressiveEngine>(
+            ConfidenceLevel::Low, ExecutionMode::Baseline, 5);
+        HandwritingRemovalWidget widget(nullptr, engine);
+        widget.show();
+        QVERIFY(widget.importImage(path));
+        auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+        auto* exportButton = widget.findChild<QPushButton*>(
+            QStringLiteral("restorationExportButton"));
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("基础模式")), 2000);
+        QVERIFY(!status->text().contains(QStringLiteral("AI 本地还原完成")));
+        QTRY_VERIFY_WITH_TIMEOUT(exportButton->isEnabled(), 2000);
+    }
+}
+
+void RemovalWidgetTest::cancellationAndRapidReplacementRejectStaleResults()
+{
+    QTemporaryDir directory;
+    const QString first = createPage(directory, QStringLiteral("first.png"), QSize(80, 60));
+    const QString second = createPage(directory, QStringLiteral("second.png"), QSize(64, 48),
+                                      QColor(180, 30, 20));
+    QVERIFY(!first.isEmpty());
+    QVERIFY(!second.isEmpty());
+
+    {
+        auto engine = std::make_shared<ProgressiveEngine>(
+            ConfidenceLevel::High, ExecutionMode::OfflineModel, 120);
+        HandwritingRemovalWidget widget(nullptr, engine);
+        widget.show();
+        QVERIFY(widget.importImage(first));
+        QTRY_VERIFY_WITH_TIMEOUT(engine->starts.load() == 1, 1000);
+        auto* cancel = widget.findChild<QPushButton*>(QStringLiteral("restorationCancelButton"));
+        auto* status = widget.findChild<QLabel*>(QStringLiteral("restorationStatus"));
+        QTRY_VERIFY_WITH_TIMEOUT(cancel->isEnabled(), 1000);
+        cancel->click();
+        QTRY_VERIFY_WITH_TIMEOUT(engine->cancellations.load() == 1, 2000);
+        QTRY_VERIFY_WITH_TIMEOUT(status->text().contains(QStringLiteral("已取消")), 2000);
+        QVERIFY(!widget.originalImage().isNull());
+        QVERIFY(widget.resultImage().isNull());
+        QString error;
+        QVERIFY(!widget.exportPng(directory.filePath(QStringLiteral("cancelled.png")), &error));
+    }
+
+    {
+        auto engine = std::make_shared<ProgressiveEngine>(
+            ConfidenceLevel::High, ExecutionMode::OfflineModel, 80, false);
+        HandwritingRemovalWidget widget(nullptr, engine);
+        widget.show();
+        QVERIFY(widget.importImage(first));
+        QTRY_VERIFY_WITH_TIMEOUT(engine->starts.load() == 1, 1000);
+        QVERIFY(widget.importImage(second));
+        QCOMPARE(widget.originalImage().size(), QSize(64, 48));
+        QVERIFY(widget.resultImage().isNull());
+        QTRY_VERIFY_WITH_TIMEOUT(engine->starts.load() == 2, 2000);
+        QVERIFY(widget.resultImage().isNull());
+        QTRY_COMPARE_WITH_TIMEOUT(widget.resultImage().size(), QSize(64, 48), 3000);
+        QCOMPARE(widget.originalImage().size(), QSize(64, 48));
+        QCOMPARE(widget.findChild<QComboBox*>(QStringLiteral("restorationViewSelector"))
+                     ->currentText(), QStringLiteral("结果"));
+    }
+}
+
+void RemovalWidgetTest::rejectsOverLimitInputBeforeEngineSubmission()
+{
+    QTemporaryDir directory;
+    const QString path = directory.filePath(QStringLiteral("too-large.png"));
+    QImage image(8000, 5001, QImage::Format_Grayscale8);
+    QVERIFY(!image.isNull());
+    image.fill(255);
+    QVERIFY(image.save(path, "PNG"));
+    image = {};
+
+    auto engine = std::make_shared<ProgressiveEngine>();
+    HandwritingRemovalWidget widget(nullptr, engine);
+    QVERIFY(!widget.importImage(path));
+    QCOMPARE(engine->starts.load(), 0);
+    QVERIFY(widget.originalImage().isNull());
+    QVERIFY(widget.findChild<QLabel*>(QStringLiteral("restorationStatus"))->text()
+                .contains(QStringLiteral("4000 万像素")));
 }
 
 void RemovalWidgetTest::failedRegenerationKeepsStaleResultUnexportable()
@@ -223,7 +466,6 @@ void RemovalWidgetTest::failedRegenerationKeepsStaleResultUnexportable()
     QVERIFY(exportButton);
     QVERIFY(status);
     QVERIFY(widget.importImage(path));
-    widget.startAutomaticProcessing();
     QTRY_VERIFY_WITH_TIMEOUT(automatic->isEnabled(), 3000);
     QVERIFY(exportButton->isEnabled());
     const QImage previousResult = widget.resultImage().copy();
@@ -253,7 +495,11 @@ void RemovalWidgetTest::productionSizeCanvasRendersAndEditsAtDisplayResolution()
     widget.show();
     QVERIFY(widget.importImage(path));
     auto* canvas = widget.findChild<QWidget*>(QStringLiteral("restorationCanvas"));
+    auto* automatic = widget.findChild<QPushButton*>(QStringLiteral("restorationAutoButton"));
     QVERIFY(canvas);
+    QVERIFY(automatic);
+    QTRY_VERIFY_WITH_TIMEOUT(automatic->isEnabled(), 3000);
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.resultImage().isNull(), 3000);
     QTRY_VERIFY_WITH_TIMEOUT(canvas->property("maskOverlayPixelCount").toInt() > 0, 3000);
     const int overlayPixels = canvas->property("maskOverlayPixelCount").toInt();
     QVERIFY(overlayPixels <= canvas->width() * canvas->height());
@@ -287,6 +533,9 @@ void RemovalWidgetTest::acceptsLocalDropAndReportsInvalidInput()
     QApplication::sendEvent(&widget, &drop);
     QVERIFY(drop.isAccepted());
     QVERIFY(!widget.originalImage().isNull());
+    QTRY_VERIFY_WITH_TIMEOUT(!widget.resultImage().isNull(), 3000);
+    QCOMPARE(widget.findChild<QComboBox*>(QStringLiteral("restorationViewSelector"))
+                 ->currentText(), QStringLiteral("结果"));
     delete mime;
 }
 
