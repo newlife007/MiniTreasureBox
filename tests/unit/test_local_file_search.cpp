@@ -363,9 +363,9 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
              1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
-    auto secondResult = updateBases.at(1);
+    auto secondResult = LocalFileSearchIndexResult{updateBases.at(1), true, false, {}};
     for (const QString& path : updatePaths.at(1)) {
-        secondResult = LocalFileSearch::refreshSubtree(secondResult, path);
+        secondResult = LocalFileSearch::refreshSubtree(secondResult.index, path);
         QVERIFY(secondResult.success);
     }
     secondUpdate.addResult(secondResult);
