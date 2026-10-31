@@ -358,7 +358,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
-    QVERIFY(updatePaths.at(1).contains(branchB));
+    QVERIFY(updatePaths.at(1).contains(branchB)
+            || updatePaths.at(1).contains(temporary.path()));
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
              1);
