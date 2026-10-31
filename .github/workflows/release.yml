@@ -349,7 +349,7 @@ jobs:
             python_architecture: x64
             package_suffix: x64
           - architecture: arm64
-            runner: macos-14
+            runner: macos-15
             python_architecture: arm64
             package_suffix: arm64
     runs-on: ${{ matrix.runner }}
