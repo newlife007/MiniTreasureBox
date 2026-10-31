@@ -87,7 +87,6 @@ private:
     bool indexUpdateInProgress_{false};
     bool watchRegistrationComplete_{false};
     QStringList activeUpdatePaths_;
-    QSet<QString> recentlyRefreshedPaths_;
     IndexBuilder indexBuilder_;
     IndexUpdater indexUpdater_;
     SearchStarter searchStarter_;

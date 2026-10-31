@@ -216,7 +216,6 @@ void LocalFileSearchWidget::beginIndexBuild()
     indexUpdateInProgress_ = false;
     pendingChangedPaths_.clear();
     activeUpdatePaths_.clear();
-    recentlyRefreshedPaths_.clear();
     if (!fileWatcher_->directories().isEmpty()) {
         fileWatcher_->removePaths(fileWatcher_->directories());
     }
@@ -328,18 +327,6 @@ void LocalFileSearchWidget::queueChangedPath(const QString& path)
         // redundant overlapping update.
         return;
     }
-    if (!indexUpdateInProgress_
-        && std::any_of(recentlyRefreshedPaths_.cbegin(), recentlyRefreshedPaths_.cend(),
-                       [&normalized](const QString& refreshedPath) {
-                           const QString relative = QDir::fromNativeSeparators(
-                               QDir(refreshedPath).relativeFilePath(normalized));
-                           return relative == QStringLiteral(".")
-                               || (!QDir::isAbsolutePath(relative)
-                                   && relative != QStringLiteral("..")
-                                   && !relative.startsWith(QStringLiteral("../")));
-                       })) {
-        return;
-    }
     pendingChangedPaths_.insert(normalized);
     updateTimer_->start();
 }
@@ -419,10 +406,6 @@ void LocalFileSearchWidget::applyPendingUpdates()
                         ++pending;
                     }
                 }
-                recentlyRefreshedPaths_ = QSet<QString>(coalesced.cbegin(), coalesced.cend());
-                QTimer::singleShot(100, this, [this] {
-                    recentlyRefreshedPaths_.clear();
-                });
                 index_ = result.index;
                 const bool addedDirectoryWatches = configureWatcher();
                 if (addedDirectoryWatches) {
