@@ -9,11 +9,16 @@ import json
 import shutil
 import subprocess
 import sys
-import tarfile
 import urllib.request
 import venv
 from pathlib import Path
 from urllib.parse import urlsplit
+
+
+REQUIRED_MODEL_FILES = ("inference.onnx", "inference.yml")
+ModelFileRecord = dict[str, str]
+ModelFiles = dict[str, ModelFileRecord]
+ValidatedModelManifest = dict[str, dict[str, ModelFiles]]
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -66,14 +71,82 @@ def download(url: str, destination: Path, expected_sha256: str) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def safe_extract(archive: Path, destination: Path) -> None:
-    destination_root = destination.resolve()
-    with tarfile.open(archive) as package:
-        for member in package.getmembers():
-            target = (destination / member.name).resolve()
-            if destination_root != target and destination_root not in target.parents:
-                raise SystemExit(f"Model archive contains an unsafe path: {member.name}")
-        package.extractall(destination, filter="data")
+def validate_model_manifest(model_manifest: object) -> ValidatedModelManifest:
+    if not isinstance(model_manifest, dict) or not model_manifest:
+        raise SystemExit("PaddleOCR model manifest must contain at least one model record")
+
+    validated: ValidatedModelManifest = {}
+    for model_name, record in model_manifest.items():
+        if (
+            not isinstance(model_name, str)
+            or not model_name
+            or Path(model_name).name != model_name
+            or model_name in {".", ".."}
+        ):
+            raise SystemExit(f"PaddleOCR model name must be a safe directory name: {model_name!r}")
+        if not isinstance(record, dict):
+            raise SystemExit(f"PaddleOCR model record must be an object: {model_name}")
+
+        files = record.get("files")
+        if not isinstance(files, dict):
+            raise SystemExit(f"PaddleOCR model record must define a files object: {model_name}")
+        missing = [filename for filename in REQUIRED_MODEL_FILES if filename not in files]
+        if missing:
+            raise SystemExit(
+                f"PaddleOCR model record is incomplete for {model_name}; "
+                f"missing required files: {', '.join(missing)}"
+            )
+        unsupported = sorted(set(files) - set(REQUIRED_MODEL_FILES))
+        if unsupported:
+            raise SystemExit(
+                f"PaddleOCR model record contains unsupported files for {model_name}: "
+                f"{', '.join(unsupported)}"
+            )
+
+        validated_files: dict[str, dict[str, str]] = {}
+        for filename in REQUIRED_MODEL_FILES:
+            file_record = files[filename]
+            if not isinstance(file_record, dict):
+                raise SystemExit(
+                    f"PaddleOCR model file record must be an object: {model_name}/{filename}"
+                )
+            url = file_record.get("url")
+            if not isinstance(url, str) or not url:
+                raise SystemExit(
+                    f"PaddleOCR model file URL is missing: {model_name}/{filename}"
+                )
+            if urlsplit(url).scheme != "https":
+                raise SystemExit(f"Model URL must use HTTPS: {url}")
+            expected_sha256 = file_record.get("sha256")
+            if (
+                not isinstance(expected_sha256, str)
+                or len(expected_sha256) != 64
+                or any(character not in "0123456789abcdefABCDEF" for character in expected_sha256)
+            ):
+                raise SystemExit(
+                    f"PaddleOCR model file SHA-256 is invalid: {model_name}/{filename}"
+                )
+            validated_files[filename] = {
+                "url": url,
+                "sha256": expected_sha256.lower(),
+            }
+        validated[model_name] = {"files": validated_files}
+    return validated
+
+
+def stage_models(model_manifest: object, models: Path) -> None:
+    validated = validate_model_manifest(model_manifest)
+    models.mkdir(parents=True)
+    for model_name, record in validated.items():
+        model_destination = models / model_name
+        model_destination.mkdir()
+        for filename in REQUIRED_MODEL_FILES:
+            file_record = record["files"][filename]
+            download(
+                file_record["url"],
+                model_destination / filename,
+                file_record["sha256"],
+            )
 
 
 def python_in(venv_root: Path) -> Path:
@@ -170,22 +243,8 @@ def main() -> int:
     subprocess.run([python, "-m", "pip", "install", "--disable-pip-version-check", "-r", arguments.requirements.resolve()], check=True)
 
     model_manifest = json.loads(arguments.model_manifest.read_text(encoding="utf-8"))
-    archives = work / "model-archives"
-    extracted = work / "extracted-models"
-    archives.mkdir()
-    extracted.mkdir()
     models = output / "models"
-    models.mkdir(parents=True)
-    for model_name, record in model_manifest.items():
-        url = str(record["url"])
-        expected_sha256 = str(record["sha256"]).lower()
-        archive = archives / Path(urlsplit(url).path).name
-        download(url, archive, expected_sha256)
-        safe_extract(archive, extracted)
-        source = extracted / str(record["archiveRoot"])
-        if not (source / "inference.onnx").is_file() or not (source / "inference.yml").is_file():
-            raise SystemExit(f"Extracted PaddleOCR model is incomplete: {source}")
-        shutil.copytree(source, models / model_name)
+    stage_models(model_manifest, models)
 
     dist = work / "dist"
     pyinstaller_work = work / "pyinstaller-work"
