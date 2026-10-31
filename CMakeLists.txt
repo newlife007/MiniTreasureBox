@@ -16,6 +16,8 @@ add_library(minitreasurebox_foundation STATIC
     src/ai/handwriting_removal/removal_engine.h
     src/ai/handwriting_removal/removal_widget.cpp
     src/ai/handwriting_removal/removal_widget.h
+    src/ai/handwriting_removal/restoration_engine.cpp
+    src/ai/handwriting_removal/restoration_engine.h
     src/ai/ocr/ocr_engine.cpp
     src/ai/ocr/ocr_engine.h
     src/ai/ocr/ocr_widget.cpp
@@ -147,6 +149,21 @@ if(BUILD_TESTING)
     add_dependencies(test_ocr_widget fake_paddleocr_worker)
     add_test(NAME ocr_widget COMMAND test_ocr_widget)
 
+    add_executable(fake_exam_restoration_worker
+        tests/fixtures/fake_exam_restoration_worker.cpp)
+    target_link_libraries(fake_exam_restoration_worker PRIVATE Qt6::Core Qt6::Gui)
+    if(MSVC)
+        set_property(TARGET fake_exam_restoration_worker PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+
+    add_executable(test_exam_restoration_engine
+        tests/unit/test_exam_restoration_engine.cpp)
+    target_link_libraries(test_exam_restoration_engine PRIVATE
+        minitreasurebox_foundation Qt6::Test)
+    add_dependencies(test_exam_restoration_engine fake_exam_restoration_worker)
+    add_test(NAME exam_restoration_engine COMMAND test_exam_restoration_engine)
+
     add_executable(test_removal_engine tests/unit/test_removal_engine.cpp)
     target_link_libraries(test_removal_engine PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME removal_engine COMMAND test_removal_engine)
@@ -155,13 +172,26 @@ if(BUILD_TESTING)
     target_link_libraries(test_removal_widget PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME removal_widget COMMAND test_removal_widget)
 
+    add_executable(test_exam_restoration_e2e
+        tests/unit/test_exam_restoration_e2e.cpp)
+    target_link_libraries(test_exam_restoration_e2e PRIVATE
+        minitreasurebox_foundation Qt6::Test)
+    add_dependencies(test_exam_restoration_e2e fake_exam_restoration_worker)
+    add_test(NAME exam_restoration_e2e COMMAND test_exam_restoration_e2e)
+
+    add_executable(exam_restoration_runtime_smoke
+        tests/fixtures/exam_restoration_runtime_smoke.cpp)
+    target_link_libraries(exam_restoration_runtime_smoke PRIVATE
+        minitreasurebox_foundation)
+
     add_executable(test_local_file_search tests/unit/test_local_file_search.cpp)
     target_link_libraries(test_local_file_search PRIVATE minitreasurebox_foundation Qt6::Test)
     add_test(NAME local_file_search COMMAND test_local_file_search)
 
     set_tests_properties(
         tool_logic shell_interactions tool_cards game_widgets
-        ocr_engine ocr_widget removal_engine removal_widget local_file_search
+        ocr_engine ocr_widget removal_engine removal_widget exam_restoration_engine
+        exam_restoration_e2e local_file_search
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()
@@ -241,6 +271,108 @@ if(_mtb_ocr_runtime_ready AND MINITREASUREBOX_STAGE_BUNDLED_OCR_FOR_BUILD)
     add_dependencies(MiniTreasureBox stage_minitreasurebox_ocr_runtime)
 endif()
 
+set(MINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT "" CACHE PATH
+    "Path to a staged, relocatable exam-restoration worker runtime")
+option(REQUIRE_BUNDLED_EXAM_RESTORATION
+    "Fail configuration unless a complete exam-restoration runtime is staged" OFF)
+option(MINITREASUREBOX_STAGE_BUNDLED_EXAM_RESTORATION_FOR_BUILD
+    "Copy the configured exam-restoration runtime beside build-tree executables" ON)
+
+set(_mtb_exam_restoration_runtime_ready FALSE)
+if(MINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT)
+    get_filename_component(_mtb_exam_restoration_root
+        "${MINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT}" ABSOLUTE)
+    if(WIN32)
+        set(_mtb_exam_restoration_worker
+            "${_mtb_exam_restoration_root}/bin/exam-restoration-worker.exe")
+    else()
+        set(_mtb_exam_restoration_worker
+            "${_mtb_exam_restoration_root}/bin/exam-restoration-worker")
+    endif()
+    set(_mtb_exam_restoration_model
+        "${_mtb_exam_restoration_root}/models/exam-restoration.onnx")
+    set(_mtb_exam_restoration_self_test
+        "${_mtb_exam_restoration_root}/SELF_TEST.json")
+    set(_mtb_exam_restoration_required_files
+        "${_mtb_exam_restoration_worker}"
+        "${_mtb_exam_restoration_model}"
+        "${_mtb_exam_restoration_self_test}"
+        "${_mtb_exam_restoration_root}/licenses/MODEL_LICENSE.txt"
+        "${_mtb_exam_restoration_root}/licenses/THIRD_PARTY_MANIFEST.md"
+        "${_mtb_exam_restoration_root}/licenses/PYTHON_REQUIREMENTS.txt"
+        "${_mtb_exam_restoration_root}/licenses/EXAM_RESTORATION_MODELS.json"
+    )
+    foreach(_required_file IN LISTS _mtb_exam_restoration_required_files)
+        if(NOT EXISTS "${_required_file}")
+            message(FATAL_ERROR
+                "The staged exam-restoration runtime is missing ${_required_file}")
+        endif()
+    endforeach()
+    if(NOT IS_DIRECTORY "${_mtb_exam_restoration_root}/bin/_internal")
+        message(FATAL_ERROR
+            "The staged exam-restoration worker has no bundled Python dependencies")
+    endif()
+
+    file(READ "${_mtb_exam_restoration_self_test}" _mtb_exam_self_test_json)
+    string(JSON _mtb_exam_self_test_ok ERROR_VARIABLE _mtb_exam_json_error
+        GET "${_mtb_exam_self_test_json}" ok)
+    if(_mtb_exam_json_error OR NOT _mtb_exam_self_test_ok)
+        message(FATAL_ERROR
+            "The staged exam-restoration runtime has invalid self-test metadata")
+    endif()
+    foreach(_json_field backend model model_sha256 model_bytes)
+        string(JSON _mtb_exam_self_test_${_json_field}
+            ERROR_VARIABLE _mtb_exam_json_error
+            GET "${_mtb_exam_self_test_json}" ${_json_field})
+        if(_mtb_exam_json_error)
+            message(FATAL_ERROR
+                "The staged exam-restoration self-test is missing ${_json_field}")
+        endif()
+    endforeach()
+    if(NOT _mtb_exam_self_test_backend STREQUAL "onnxruntime"
+        OR NOT _mtb_exam_self_test_model STREQUAL "exam-restoration.onnx")
+        message(FATAL_ERROR
+            "The staged exam-restoration self-test reports an unexpected runtime")
+    endif()
+    file(SIZE "${_mtb_exam_restoration_model}" _mtb_exam_model_bytes)
+    file(SHA256 "${_mtb_exam_restoration_model}" _mtb_exam_model_sha256)
+    if(NOT _mtb_exam_self_test_model_bytes EQUAL _mtb_exam_model_bytes
+        OR NOT _mtb_exam_self_test_model_sha256 STREQUAL _mtb_exam_model_sha256)
+        message(FATAL_ERROR
+            "The staged exam-restoration model does not match self-test metadata")
+    endif()
+    set(_mtb_exam_restoration_runtime_ready TRUE)
+endif()
+
+if(REQUIRE_BUNDLED_EXAM_RESTORATION
+    AND NOT _mtb_exam_restoration_runtime_ready)
+    message(FATAL_ERROR
+        "REQUIRE_BUNDLED_EXAM_RESTORATION requires MINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT")
+endif()
+
+if(_mtb_exam_restoration_runtime_ready
+    AND MINITREASUREBOX_STAGE_BUNDLED_EXAM_RESTORATION_FOR_BUILD)
+    string(SHA256 _mtb_exam_root_hash "${_mtb_exam_restoration_root}")
+    string(SUBSTRING "${_mtb_exam_root_hash}" 0 12 _mtb_exam_root_hash_short)
+    set(_mtb_build_exam_root "${CMAKE_BINARY_DIR}/exam-restoration-runtime")
+    set(_mtb_build_exam_stamp
+        "${_mtb_build_exam_root}/.staged-${_mtb_exam_root_hash_short}")
+    add_custom_command(
+        OUTPUT "${_mtb_build_exam_stamp}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${_mtb_build_exam_root}"
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                "${_mtb_exam_restoration_root}" "${_mtb_build_exam_root}"
+        COMMAND "${CMAKE_COMMAND}" -E touch "${_mtb_build_exam_stamp}"
+        DEPENDS ${_mtb_exam_restoration_required_files}
+        COMMENT "Staging bundled exam-restoration runtime for build-tree execution"
+        VERBATIM
+    )
+    add_custom_target(stage_minitreasurebox_exam_restoration_runtime ALL
+        DEPENDS "${_mtb_build_exam_stamp}")
+    add_dependencies(MiniTreasureBox
+        stage_minitreasurebox_exam_restoration_runtime)
+endif()
+
 if(APPLE)
     install(TARGETS MiniTreasureBox BUNDLE DESTINATION .)
 elseif(WIN32)
@@ -256,6 +388,16 @@ if(_mtb_ocr_runtime_ready AND WIN32)
 elseif(_mtb_ocr_runtime_ready AND APPLE)
     install(DIRECTORY "${_mtb_ocr_root}/"
         DESTINATION "MiniTreasureBox.app/Contents/Resources/ocr-runtime"
+        USE_SOURCE_PERMISSIONS)
+endif()
+
+if(_mtb_exam_restoration_runtime_ready AND WIN32)
+    install(DIRECTORY "${_mtb_exam_restoration_root}/"
+        DESTINATION "exam-restoration-runtime"
+        USE_SOURCE_PERMISSIONS)
+elseif(_mtb_exam_restoration_runtime_ready AND APPLE)
+    install(DIRECTORY "${_mtb_exam_restoration_root}/"
+        DESTINATION "MiniTreasureBox.app/Contents/Resources/exam-restoration-runtime"
         USE_SOURCE_PERMISSIONS)
 endif()
 

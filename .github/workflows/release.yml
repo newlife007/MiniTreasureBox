@@ -59,23 +59,47 @@ jobs:
           arch: win64_msvc2022_64
           modules: qtmultimedia
           cache: false
-      - name: Set up Python for PaddleOCR packaging
+      - name: Set up Python for worker packaging
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           architecture: x64
+      - name: Determine exam-restoration release gate
+        id: restoration_manifest
+        shell: pwsh
+        run: |
+          $status = python scripts/build_exam_restoration_runtime.py --manifest-status
+          if ($LASTEXITCODE -ne 0 -or $status -notin @('enabled', 'disabled')) {
+            throw 'Exam-restoration manifest validation failed.'
+          }
+          "enabled=$status" >> $env:GITHUB_OUTPUT
       - name: Build bundled PaddleOCR runtime
         shell: pwsh
         run: |
           python scripts/build_paddleocr_runtime.py `
             --output '${{ runner.temp }}/ocr-runtime-staged' `
             --work '${{ runner.temp }}/ocr-runtime-build'
+      - name: Build bundled exam-restoration runtime
+        if: steps.restoration_manifest.outputs.enabled == 'enabled'
+        shell: pwsh
+        run: |
+          python scripts/build_exam_restoration_runtime.py `
+            --output '${{ runner.temp }}/exam-restoration-runtime-staged' `
+            --work '${{ runner.temp }}/exam-restoration-runtime-build'
       - name: Configure
-        run: >-
-          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
-          -DBUILD_TESTING=ON
-          -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
-          "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
+        shell: pwsh
+        run: |
+          $arguments = @(
+            '-S', '.', '-B', 'build', '-G', 'Visual Studio 17 2022', '-A', 'x64',
+            '-DBUILD_TESTING=ON', '-DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON',
+            '-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged'
+          )
+          if ('${{ steps.restoration_manifest.outputs.enabled }}' -eq 'enabled') {
+            $arguments += '-DREQUIRE_BUNDLED_EXAM_RESTORATION=ON'
+            $arguments += '-DMINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT=${{ runner.temp }}/exam-restoration-runtime-staged'
+          }
+          & cmake @arguments
+          if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
       - name: Build
         run: cmake --build build --config Release --parallel
       - name: Test
@@ -131,8 +155,34 @@ jobs:
             }
           }
 
+          $restorationEnabled = '${{ steps.restoration_manifest.outputs.enabled }}' -eq 'enabled'
+          if ($restorationEnabled) {
+            $restorationRoot = Join-Path $installDirectory 'exam-restoration-runtime'
+            $restorationWorker = Join-Path $restorationRoot 'bin/exam-restoration-worker.exe'
+            $restorationModels = Join-Path $restorationRoot 'models'
+            $requiredRestorationFiles = @(
+              $restorationWorker
+              (Join-Path $restorationModels 'exam-restoration.onnx')
+              (Join-Path $restorationRoot 'SELF_TEST.json')
+              (Join-Path $restorationRoot 'licenses/MODEL_LICENSE.txt')
+              (Join-Path $restorationRoot 'licenses/THIRD_PARTY_MANIFEST.md')
+              (Join-Path $restorationRoot 'licenses/PYTHON_REQUIREMENTS.txt')
+              (Join-Path $restorationRoot 'licenses/EXAM_RESTORATION_MODELS.json')
+            )
+            foreach ($runtimeFile in $requiredRestorationFiles) {
+              if (-not (Test-Path -PathType Leaf $runtimeFile)) {
+                throw "Required installed exam-restoration file was not found at $runtimeFile."
+              }
+            }
+          }
+
           $smokeHelperPath = Join-Path $binaryDirectory 'ocr_runtime_smoke.exe'
           Copy-Item -LiteralPath 'build/Release/ocr_runtime_smoke.exe' -Destination $smokeHelperPath
+          $restorationSmokeHelperPath = Join-Path $binaryDirectory 'exam_restoration_runtime_smoke.exe'
+          if ($restorationEnabled) {
+            Copy-Item -LiteralPath 'build/Release/exam_restoration_runtime_smoke.exe' `
+              -Destination $restorationSmokeHelperPath
+          }
 
           $resolvedApplicationPath = (Resolve-Path -LiteralPath $applicationPath).Path
           $programDirectories = @(
@@ -165,6 +215,8 @@ jobs:
           $originalPath = $env:PATH
           $originalWorkerOverride = $env:MINITREASUREBOX_PADDLEOCR_WORKER
           $originalModelOverride = $env:MINITREASUREBOX_PADDLEOCR_MODELS
+          $originalRestorationWorkerOverride = $env:MINITREASUREBOX_EXAM_RESTORATION_WORKER
+          $originalRestorationModelOverride = $env:MINITREASUREBOX_EXAM_RESTORATION_MODELS
           try {
             $env:PATH = @(
               (Join-Path $env:SystemRoot 'System32')
@@ -174,6 +226,8 @@ jobs:
             ) -join ';'
             $env:MINITREASUREBOX_PADDLEOCR_WORKER = $null
             $env:MINITREASUREBOX_PADDLEOCR_MODELS = $null
+            $env:MINITREASUREBOX_EXAM_RESTORATION_WORKER = $null
+            $env:MINITREASUREBOX_EXAM_RESTORATION_MODELS = $null
             $selfTest = & $workerPath --models $modelsPath --self-test `
               2> (Join-Path $env:RUNNER_TEMP 'paddleocr-self-test.log') |
               ConvertFrom-Json
@@ -186,6 +240,23 @@ jobs:
             & $smokeHelperPath $binaryDirectory
             if ($LASTEXITCODE -ne 0) {
               throw "Production OCR resolver smoke test exited with code $LASTEXITCODE."
+            }
+            if ($restorationEnabled) {
+              $restorationSelfTest = & $restorationWorker `
+                --models $restorationModels --self-test `
+                2> (Join-Path $env:RUNNER_TEMP 'exam-restoration-self-test.log') |
+                ConvertFrom-Json
+              if ($LASTEXITCODE -ne 0 -or -not $restorationSelfTest.ok -or
+                  $restorationSelfTest.backend -ne 'onnxruntime' -or
+                  $restorationSelfTest.model -ne 'exam-restoration.onnx') {
+                Get-Content (Join-Path $env:RUNNER_TEMP 'exam-restoration-self-test.log') `
+                  -ErrorAction SilentlyContinue
+                throw 'Bundled exam-restoration worker self-test failed.'
+              }
+              & $restorationSmokeHelperPath $binaryDirectory
+              if ($LASTEXITCODE -ne 0) {
+                throw "Production exam-restoration resolver smoke test exited with code $LASTEXITCODE."
+              }
             }
             Start-Process -FilePath $shortcutPath
             for ($attempt = 0; $attempt -lt 20 -and $null -eq $application; $attempt++) {
@@ -202,7 +273,10 @@ jobs:
             $env:PATH = $originalPath
             $env:MINITREASUREBOX_PADDLEOCR_WORKER = $originalWorkerOverride
             $env:MINITREASUREBOX_PADDLEOCR_MODELS = $originalModelOverride
+            $env:MINITREASUREBOX_EXAM_RESTORATION_WORKER = $originalRestorationWorkerOverride
+            $env:MINITREASUREBOX_EXAM_RESTORATION_MODELS = $originalRestorationModelOverride
             Remove-Item -LiteralPath $smokeHelperPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $restorationSmokeHelperPath -Force -ErrorAction SilentlyContinue
           }
           if ($null -eq $application) {
             throw "The Start Menu shortcut did not launch $resolvedApplicationPath."
@@ -298,24 +372,53 @@ jobs:
             echo "Expected ${{ matrix.architecture }} runner, received $(uname -m)." >&2
             exit 1
           fi
-      - name: Set up Python for PaddleOCR packaging
+      - name: Set up Python for worker packaging
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.12'
           architecture: ${{ matrix.python_architecture }}
+      - name: Determine exam-restoration release gate
+        id: restoration_manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(python3 scripts/build_exam_restoration_runtime.py --manifest-status)"
+          if [[ "$status" != 'enabled' && "$status" != 'disabled' ]]; then
+            echo 'Exam-restoration manifest validation failed.' >&2
+            exit 1
+          fi
+          echo "enabled=$status" >> "$GITHUB_OUTPUT"
       - name: Build bundled PaddleOCR runtime
         shell: bash
         run: |
           python3 scripts/build_paddleocr_runtime.py \
             --output '${{ runner.temp }}/ocr-runtime-staged' \
             --work '${{ runner.temp }}/ocr-runtime-build'
+      - name: Build bundled exam-restoration runtime
+        if: steps.restoration_manifest.outputs.enabled == 'enabled'
+        shell: bash
+        run: |
+          python3 scripts/build_exam_restoration_runtime.py \
+            --output '${{ runner.temp }}/exam-restoration-runtime-staged' \
+            --work '${{ runner.temp }}/exam-restoration-runtime-build'
       - name: Configure
-        run: >-
-          cmake -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
-          "-DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}"
-          "-DMINITREASUREBOX_PACKAGE_ARCH_SUFFIX=${{ matrix.package_suffix }}"
-          -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
-          "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
+        shell: bash
+        run: |
+          set -euo pipefail
+          arguments=(
+            -S . -B build -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
+            "-DCMAKE_OSX_ARCHITECTURES=${{ matrix.architecture }}"
+            "-DMINITREASUREBOX_PACKAGE_ARCH_SUFFIX=${{ matrix.package_suffix }}"
+            -DMINITREASUREBOX_REQUIRE_BUNDLED_OCR=ON
+            "-DMINITREASUREBOX_OCR_RUNTIME_ROOT=${{ runner.temp }}/ocr-runtime-staged"
+          )
+          if [[ '${{ steps.restoration_manifest.outputs.enabled }}' == 'enabled' ]]; then
+            arguments+=(
+              -DREQUIRE_BUNDLED_EXAM_RESTORATION=ON
+              "-DMINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT=${{ runner.temp }}/exam-restoration-runtime-staged"
+            )
+          fi
+          cmake "${arguments[@]}"
       - name: Build
         run: cmake --build build --parallel
       - name: Test
@@ -378,8 +481,33 @@ jobs:
               exit 1
             fi
           done
+
+          restoration_enabled='${{ steps.restoration_manifest.outputs.enabled }}'
+          if [[ "$restoration_enabled" == 'enabled' ]]; then
+            restoration_root="$installed_application/Contents/Resources/exam-restoration-runtime"
+            restoration_worker="$restoration_root/bin/exam-restoration-worker"
+            restoration_models="$restoration_root/models"
+            required_restoration_files=(
+              "$restoration_worker"
+              "$restoration_models/exam-restoration.onnx"
+              "$restoration_root/SELF_TEST.json"
+              "$restoration_root/licenses/MODEL_LICENSE.txt"
+              "$restoration_root/licenses/THIRD_PARTY_MANIFEST.md"
+              "$restoration_root/licenses/PYTHON_REQUIREMENTS.txt"
+              "$restoration_root/licenses/EXAM_RESTORATION_MODELS.json"
+            )
+            for required_file in "${required_restoration_files[@]}"; do
+              if [[ ! -f "$required_file" ]]; then
+                echo "Required packaged exam-restoration file is missing: $required_file" >&2
+                exit 1
+              fi
+            done
+          fi
+
           self_test="$(env -u MINITREASUREBOX_PADDLEOCR_WORKER \
-            -u MINITREASUREBOX_PADDLEOCR_MODELS PATH=/usr/bin:/bin \
+            -u MINITREASUREBOX_PADDLEOCR_MODELS \
+            -u MINITREASUREBOX_EXAM_RESTORATION_WORKER \
+            -u MINITREASUREBOX_EXAM_RESTORATION_MODELS PATH=/usr/bin:/bin \
             "$worker" --models "$models" --self-test \
             2>"$RUNNER_TEMP/paddleocr-self-test.log")"
           if ! grep -q '"ok":true' <<<"$self_test" ||
@@ -389,11 +517,36 @@ jobs:
             exit 1
           fi
           env -u MINITREASUREBOX_PADDLEOCR_WORKER \
-            -u MINITREASUREBOX_PADDLEOCR_MODELS PATH=/usr/bin:/bin \
+            -u MINITREASUREBOX_PADDLEOCR_MODELS \
+            -u MINITREASUREBOX_EXAM_RESTORATION_WORKER \
+            -u MINITREASUREBOX_EXAM_RESTORATION_MODELS PATH=/usr/bin:/bin \
             build/ocr_runtime_smoke "$installed_application/Contents/MacOS"
 
+          if [[ "$restoration_enabled" == 'enabled' ]]; then
+            restoration_self_test="$(env \
+              -u MINITREASUREBOX_EXAM_RESTORATION_WORKER \
+              -u MINITREASUREBOX_EXAM_RESTORATION_MODELS PATH=/usr/bin:/bin \
+              "$restoration_worker" --models "$restoration_models" --self-test \
+              2>"$RUNNER_TEMP/exam-restoration-self-test.log")"
+            if ! grep -q '"ok":true' <<<"$restoration_self_test" ||
+               ! grep -q '"backend":"onnxruntime"' <<<"$restoration_self_test" ||
+               ! grep -q '"model":"exam-restoration.onnx"' <<<"$restoration_self_test"; then
+              cat "$RUNNER_TEMP/exam-restoration-self-test.log" >&2 || true
+              echo 'Bundled exam-restoration worker self-test failed.' >&2
+              exit 1
+            fi
+            env -u MINITREASUREBOX_PADDLEOCR_WORKER \
+              -u MINITREASUREBOX_PADDLEOCR_MODELS \
+              -u MINITREASUREBOX_EXAM_RESTORATION_WORKER \
+              -u MINITREASUREBOX_EXAM_RESTORATION_MODELS PATH=/usr/bin:/bin \
+              build/exam_restoration_runtime_smoke \
+              "$installed_application/Contents/MacOS"
+          fi
+
           env -u MINITREASUREBOX_PADDLEOCR_WORKER \
-            -u MINITREASUREBOX_PADDLEOCR_MODELS PATH=/usr/bin:/bin \
+            -u MINITREASUREBOX_PADDLEOCR_MODELS \
+            -u MINITREASUREBOX_EXAM_RESTORATION_WORKER \
+            -u MINITREASUREBOX_EXAM_RESTORATION_MODELS PATH=/usr/bin:/bin \
             "$executable" >"$RUNNER_TEMP/minitreasurebox-startup.log" 2>&1 &
           application_pid=$!
           sleep 5

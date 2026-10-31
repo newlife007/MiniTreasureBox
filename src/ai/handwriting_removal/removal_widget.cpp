@@ -1,4 +1,5 @@
 #include "ai/handwriting_removal/removal_widget.h"
+#include "ai/handwriting_removal/restoration_engine.h"
 #include "ui/widgets/tool_workspace/responsive_pair.h"
 #include "ui/widgets/tool_workspace/tool_status_strip.h"
 
@@ -59,6 +60,36 @@ qsizetype selectedPixelCount(const QImage& mask)
                                   [](uchar value) { return value != 0; });
     }
     return selected;
+}
+
+bool withinImageBudget(const QSize& size)
+{
+    return size.width() > 0 && size.height() > 0
+        && static_cast<qint64>(size.width())
+            <= MaximumImagePixels / static_cast<qint64>(size.height());
+}
+
+QString stageLabel(ProcessingStage stage)
+{
+    switch (stage) {
+    case ProcessingStage::Validating:
+        return QStringLiteral("校正方向");
+    case ProcessingStage::Initializing:
+        return QStringLiteral("校正文档");
+    case ProcessingStage::Segmenting:
+    case ProcessingStage::Fusing:
+        return QStringLiteral("识别手写");
+    case ProcessingStage::Restoring:
+    case ProcessingStage::Completed:
+        return QStringLiteral("还原纸面");
+    }
+    return QStringLiteral("还原纸面");
+}
+
+QString confidenceReason(const RestorationMetadata& metadata)
+{
+    if (metadata.confidenceReasons.isEmpty()) return {};
+    return metadata.confidenceReasons.constFirst().simplified().left(80);
 }
 
 }  // namespace
@@ -238,14 +269,14 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     , engine_(engine ? std::move(engine)
                      : std::make_shared<BaselineHandwritingRemovalEngine>())
     , canvas_(new RemovalCanvas(&document_, this))
-    , status_(new QLabel(tr("等待导入图片。内置功能是保守的本地图像基线，不是训练模型。"), this))
+    , status_(new QLabel(tr("等待导入图片。导入后会立即在本机自动还原。"), this))
     , viewSelector_(new QComboBox(this))
     , brushSize_(new QSpinBox(this))
     , maskOpacity_(new QSlider(Qt::Horizontal, this))
-    , automaticButton_(makeButton(tr("自动生成 Mask"), QStringLiteral("restorationAutoButton"),
-                                   tr("运行保守的本地颜色对比检测，不使用训练模型"), this))
+    , automaticButton_(makeButton(tr("重新自动还原"), QStringLiteral("restorationAutoButton"),
+                                   tr("重新运行本地自动还原并替换自动 Mask"), this))
     , cancelButton_(makeButton(tr("取消处理"), QStringLiteral("restorationCancelButton"),
-                                tr("取消正在运行的自动 Mask 任务"), this))
+                                tr("取消正在运行的试卷还原任务"), this))
     , undoButton_(makeButton(tr("撤销"), QStringLiteral("restorationUndoButton"),
                              tr("撤销上一次 Mask 修改"), this))
     , redoButton_(makeButton(tr("重做"), QStringLiteral("restorationRedoButton"),
@@ -263,11 +294,12 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
     status_->setWordWrap(true);
     statusStrip_->setObjectName(QStringLiteral("restorationStatusStrip"));
     statusStrip_->setState(mtb::ui::ToolUiState::Idle,
-                           tr("等待导入图片。内置功能是保守的本地图像基线，不是训练模型。"));
+                           tr("等待导入图片。导入后会立即在本机自动还原。"));
     progress_->setObjectName(QStringLiteral("restorationProgress"));
-    progress_->setRange(0, 1);
+    progress_->setRange(0, 100);
     progress_->setValue(0);
-    progress_->setTextVisible(false);
+    progress_->setFormat(tr("总进度 %p%"));
+    progress_->setTextVisible(true);
     viewSelector_->setObjectName(QStringLiteral("restorationViewSelector"));
     viewSelector_->setAccessibleName(tr("选择原图、Mask 或结果视图"));
     viewSelector_->addItem(tr("原图"), static_cast<int>(DisplayView::Original));
@@ -423,10 +455,11 @@ HandwritingRemovalWidget::HandwritingRemovalWidget(
         if (automaticThread_) {
             ++automaticTaskId_;
             automaticCancellationRequested_ = true;
+            automaticRestartPending_ = false;
             automaticThread_->requestInterruption();
             cancelButton_->setEnabled(false);
             statusStrip_->setState(mtb::ui::ToolUiState::Warning,
-                                   tr("正在取消自动 Mask 任务…"));
+                                   tr("正在取消试卷还原任务…"));
             return;
         }
         if (resultThread_) {
@@ -494,23 +527,32 @@ bool HandwritingRemovalWidget::importImage(const QString& path)
 {
     QImageReader reader(path);
     reader.setAutoTransform(true);
+    const QSize declaredSize = reader.size();
+    if (declaredSize.isValid() && !withinImageBudget(declaredSize)) {
+        showError(tr("图片超过 4000 万像素的本地处理上限。原图片未修改，请缩小后重试。"));
+        return false;
+    }
     const QImage image = reader.read();
-    if (image.isNull() || !document_.load(image)) {
-        showError(tr("图片无法读取或格式不受支持。原文件未修改，请选择有效图片。"));
+    if (image.isNull() || !withinImageBudget(image.size()) || !document_.load(image)) {
+        showError(image.isNull()
+                      ? tr("图片无法读取或格式不受支持。原文件未修改，请选择有效图片。")
+                      : tr("图片超过 4000 万像素的本地处理上限。原图片未修改，请缩小后重试。"));
         return false;
     }
     ++automaticTaskId_;
+    automaticRestartPending_ = automaticThread_ != nullptr;
     if (automaticThread_) automaticThread_->requestInterruption();
     automaticCancellationRequested_ = false;
     cancelResultProcessing();
     automaticMask_ = {};
-    result_ = document_.original().copy();
-    resultValid_ = true;
-    canvas_->setResult(result_);
+    result_ = {};
+    resultValid_ = false;
+    canvas_->setResult({});
     viewSelector_->setCurrentIndex(1);
-    statusStrip_->setState(mtb::ui::ToolUiState::Ready,
-                           tr("图片已载入内存。原文件不会被覆盖，可生成候选 Mask 或手动编辑。"));
+    statusStrip_->setState(mtb::ui::ToolUiState::Running,
+                           tr("校正方向 · 总进度 0% · 图片仅在本机处理。"));
     refreshControls();
+    if (!automaticThread_) startAutomaticProcessing();
     return true;
 }
 
@@ -519,6 +561,7 @@ void HandwritingRemovalWidget::startAutomaticProcessing()
     if (automaticThread_ || !document_.isLoaded()) {
         return;
     }
+    automaticRestartPending_ = false;
     automaticCancellationRequested_ = false;
     cancelResultProcessing();
     const QImage original = document_.original().copy();
@@ -526,12 +569,21 @@ void HandwritingRemovalWidget::startAutomaticProcessing()
     const quint64 currentTask = ++automaticTaskId_;
     QPointer<HandwritingRemovalWidget> guard(this);
     setBusy(true);
+    progress_->setRange(0, 100);
+    progress_->setValue(0);
     statusStrip_->setState(mtb::ui::ToolUiState::Running,
-                           tr("正在运行保守的本地图像检测，不会上传图片。"));
+                           tr("校正方向 · 总进度 0% · 图片仅在本机处理。"));
     automaticThread_ = QThread::create([original, engine, guard, currentTask] {
-        const RemovalResult result = engine->detectAndRemove(original, {}, [] {
-            return QThread::currentThread()->isInterruptionRequested();
-        });
+        const RemovalResult result = engine->detectAndRemoveWithProgress(
+            original, {},
+            [guard, currentTask](const RemovalProgress& progress) {
+                if (guard) {
+                    QMetaObject::invokeMethod(guard, [guard, currentTask, progress] {
+                        if (guard) guard->updateAutomaticProgress(currentTask, progress);
+                    }, Qt::QueuedConnection);
+                }
+            },
+            [] { return QThread::currentThread()->isInterruptionRequested(); });
         if (guard) {
             QMetaObject::invokeMethod(guard, [guard, currentTask, result] {
                 if (guard) guard->finishAutomatic(currentTask, result);
@@ -631,12 +683,29 @@ void HandwritingRemovalWidget::chooseExportPath()
     }
 }
 
+void HandwritingRemovalWidget::updateAutomaticProgress(
+    quint64 taskId, const RemovalProgress& progress)
+{
+    if (taskId != automaticTaskId_ || !automaticThread_) return;
+    const int percent = qBound(0, progress.percent, 100);
+    progress_->setRange(0, 100);
+    progress_->setValue(percent);
+    statusStrip_->setState(
+        mtb::ui::ToolUiState::Running,
+        tr("%1 · 总进度 %2% · 图片仅在本机处理。")
+            .arg(stageLabel(progress.stage)).arg(percent));
+}
+
 void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResult& result)
 {
     if (taskId != automaticTaskId_ || result.error == RemovalError::Cancelled) return;
     if (!result.ok || !document_.setMask(result.mask)) {
-        showError(result.message.isEmpty() ? tr("本地基线处理失败，原图片仍保留。")
+        result_ = {};
+        resultValid_ = false;
+        canvas_->setResult({});
+        showError(result.message.isEmpty() ? tr("试卷还原失败，原图片仍保留，可重新自动还原。")
                                            : result.message);
+        refreshControls();
         return;
     }
     automaticMask_ = result.mask.copy();
@@ -644,17 +713,47 @@ void HandwritingRemovalWidget::finishAutomatic(quint64 taskId, const RemovalResu
     resultValid_ = true;
     canvas_->setResult(result_);
     viewSelector_->setCurrentIndex(2);
+    progress_->setRange(0, 100);
+    progress_->setValue(100);
+
     const qsizetype candidatePixels = selectedPixelCount(result.mask);
-    if (candidatePixels == 0) {
-        statusStrip_->setState(
-            mtb::ui::ToolUiState::Warning,
-            tr("自动处理已完成，但未检测到彩色候选笔迹。可切换到 Mask，使用画笔标记需要移除的区域。"));
+    const QString reason = confidenceReason(result.metadata);
+    QString message;
+    mtb::ui::ToolUiState state = mtb::ui::ToolUiState::Success;
+    if (result.metadata.executionMode == ExecutionMode::Baseline) {
+        state = mtb::ui::ToolUiState::Warning;
+        message = tr("基础模式：未使用已批准的 AI 模型。结果可查看和导出，建议在 Mask 视图检查并按需修正。");
     } else {
-        statusStrip_->setState(
-            mtb::ui::ToolUiState::Success,
-            tr("自动处理完成，已显示复原结果并标记 %1 个候选像素。请切换到 Mask 检查。")
-                .arg(candidatePixels));
+        switch (result.metadata.confidence) {
+        case ConfidenceLevel::High:
+            message = reason.isEmpty()
+                ? tr("高置信度：本地还原已完成并显示结果。")
+                : tr("高置信度：%1。已显示本地还原结果。").arg(reason);
+            break;
+        case ConfidenceLevel::Medium:
+            state = mtb::ui::ToolUiState::Warning;
+            message = reason.isEmpty()
+                ? tr("中置信度：结果可查看和导出，建议检查 Mask。")
+                : tr("中置信度：%1。结果可查看和导出，建议检查 Mask。").arg(reason);
+            break;
+        case ConfidenceLevel::Low:
+            state = mtb::ui::ToolUiState::Warning;
+            message = reason.isEmpty()
+                ? tr("低置信度：结果可查看和导出，可选检查 Mask 和原图后再修正。")
+                : tr("低置信度：%1。结果可查看和导出，可选检查 Mask 和原图后再修正。")
+                      .arg(reason);
+            break;
+        case ConfidenceLevel::Unknown:
+            state = mtb::ui::ToolUiState::Warning;
+            message = tr("置信度未标定：结果可查看和导出，建议检查 Mask。");
+            break;
+        }
     }
+    if (candidatePixels == 0) {
+        state = mtb::ui::ToolUiState::Warning;
+        message += tr(" 未识别到候选手写区域，可选使用 Mask 工具标记。");
+    }
+    statusStrip_->setState(state, message);
     refreshControls();
 }
 
@@ -722,10 +821,13 @@ void HandwritingRemovalWidget::trackWorker(QThread* thread)
             automaticThread_ = nullptr;
             setBusy(false);
             refreshControls();
-            if (automaticCancellationRequested_) {
+            if (automaticRestartPending_) {
+                automaticRestartPending_ = false;
+                startAutomaticProcessing();
+            } else if (automaticCancellationRequested_) {
                 automaticCancellationRequested_ = false;
                 statusStrip_->setState(mtb::ui::ToolUiState::Warning,
-                                       tr("自动 Mask 任务已取消，当前图片和编辑保持不变。"));
+                                       tr("试卷还原任务已取消，当前图片和编辑保持不变。"));
             }
         }
         if (resultThread_ == thread) resultThread_ = nullptr;
@@ -738,11 +840,15 @@ void HandwritingRemovalWidget::refreshControls()
     const bool loaded = document_.isLoaded();
     const bool automaticIdle = automaticThread_ == nullptr;
     const bool processing = !automaticIdle || resultPending_;
-    automaticButton_->setText(automaticIdle ? tr("自动生成 Mask") : tr("正在自动处理…"));
+    automaticButton_->setText(automaticIdle ? tr("重新自动还原") : tr("正在自动还原…"));
     automaticButton_->setEnabled(loaded && automaticIdle);
     cancelButton_->setEnabled(loaded && processing);
-    progress_->setRange(0, processing ? 0 : 1);
-    if (!processing) progress_->setValue(0);
+    if (resultPending_ && automaticIdle) {
+        progress_->setRange(0, 0);
+    } else {
+        progress_->setRange(0, 100);
+        if (!processing) progress_->setValue(resultValid_ ? 100 : 0);
+    }
     undoButton_->setEnabled(loaded && automaticIdle && document_.canUndo());
     redoButton_->setEnabled(loaded && automaticIdle && document_.canRedo());
     exportButton_->setEnabled(loaded && automaticIdle && !resultPending_ && resultValid_
@@ -753,12 +859,16 @@ void HandwritingRemovalWidget::refreshControls()
 
 void HandwritingRemovalWidget::setBusy(bool busy)
 {
-    automaticButton_->setText(busy ? tr("正在自动处理…") : tr("自动生成 Mask"));
+    automaticButton_->setText(busy ? tr("正在自动还原…") : tr("重新自动还原"));
     automaticButton_->setEnabled(!busy && document_.isLoaded());
     cancelButton_->setEnabled(busy || resultPending_);
     const bool processing = busy || resultPending_;
-    progress_->setRange(0, processing ? 0 : 1);
-    if (!processing) progress_->setValue(0);
+    if (resultPending_ && !busy) {
+        progress_->setRange(0, 0);
+    } else {
+        progress_->setRange(0, 100);
+        if (!processing) progress_->setValue(resultValid_ ? 100 : 0);
+    }
     undoButton_->setEnabled(!busy && document_.canUndo());
     redoButton_->setEnabled(!busy && document_.canRedo());
     exportButton_->setEnabled(!busy && !resultPending_ && resultValid_
@@ -773,7 +883,8 @@ void HandwritingRemovalWidget::showError(const QString& message)
 
 QWidget* createHandwritingRemovalWidget(QWidget* parent)
 {
-    return new HandwritingRemovalWidget(parent);
+    return new HandwritingRemovalWidget(
+        parent, std::make_shared<RestorationWorkerEngine>());
 }
 
 }  // namespace mtb::handwriting

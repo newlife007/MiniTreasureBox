@@ -13,6 +13,13 @@ RemovalResult failure(RemovalError error, const QString& message)
     return {false, {}, {}, error, message};
 }
 
+bool validImage(const QImage& image)
+{
+    if (image.isNull() || image.width() <= 0 || image.height() <= 0) return false;
+    return static_cast<qint64>(image.width())
+        <= MaximumImagePixels / static_cast<qint64>(image.height());
+}
+
 bool validOptions(const RemovalOptions& options)
 {
     return options.colorDifferenceThreshold >= 0
@@ -50,7 +57,7 @@ RemovalResult BaselineHandwritingRemovalEngine::detectAndRemove(
     const QImage& image, const RemovalOptions& options,
     const CancellationCheck& cancelled) const
 {
-    if (image.isNull() || !validOptions(options)) {
+    if (!validImage(image) || !validOptions(options)) {
         return failure(RemovalError::InvalidInput,
                        QStringLiteral("图片或处理参数无效。原图片未修改。"));
     }
@@ -74,7 +81,7 @@ RemovalResult BaselineHandwritingRemovalEngine::removeWithMask(
     const QImage& image, const QImage& mask, const RemovalOptions& options,
     const CancellationCheck& cancelled) const
 {
-    if (image.isNull() || !validOptions(options)) {
+    if (!validImage(image) || !validOptions(options)) {
         return failure(RemovalError::InvalidInput,
                        QStringLiteral("图片或处理参数无效。原图片未修改。"));
     }
@@ -102,7 +109,7 @@ QImage BaselineHandwritingRemovalEngine::proposeMask(
     const QImage& image, const RemovalOptions& options,
     const CancellationCheck& cancelled)
 {
-    if (image.isNull() || !validOptions(options)) {
+    if (!validImage(image) || !validOptions(options)) {
         return {};
     }
     const QImage source = image.convertToFormat(QImage::Format_RGB32);
@@ -153,7 +160,7 @@ QImage BaselineHandwritingRemovalEngine::conservativeFill(
     const QImage& image, const QImage& mask, int radius,
     const CancellationCheck& cancelled)
 {
-    if (image.isNull() || radius <= 0 || radius > 128) {
+    if (!validImage(image) || radius <= 0 || radius > 128) {
         return {};
     }
     const QImage normalized = normalizedMask(mask, image.size(), cancelled);

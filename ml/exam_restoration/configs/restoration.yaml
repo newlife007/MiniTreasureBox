@@ -1,0 +1,6 @@
+seed: 26
+accepted_mask_only: true
+strategies:
+  - local_paper_estimate
+  - constrained_line_reconnection
+outside_mask_loss_check: exact

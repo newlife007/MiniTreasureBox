@@ -4,20 +4,68 @@
 #include <QPoint>
 #include <QRect>
 #include <QString>
+#include <QStringList>
 
 #include <functional>
 #include <vector>
 
 namespace mtb::handwriting {
 
+inline constexpr qint64 MaximumImagePixels = 40LL * 1000 * 1000;
+
 enum class RemovalError {
     None,
     InvalidInput,
     ProcessingFailed,
     Cancelled,
+    RuntimeMissing,
+    ModelDataMissing,
+    ProtocolError,
+    TimedOut,
+    ResourceLimit,
+    ProcessCrashed,
+};
+
+enum class ProcessingStage {
+    Validating,
+    Initializing,
+    Segmenting,
+    Fusing,
+    Restoring,
+    Completed,
+};
+
+enum class ConfidenceLevel {
+    Unknown,
+    High,
+    Medium,
+    Low,
+};
+
+enum class ExecutionMode {
+    Baseline,
+    OfflineModel,
+};
+
+struct RemovalProgress {
+    QString requestId;
+    ProcessingStage stage{ProcessingStage::Validating};
+    int percent{0};
+};
+
+struct RestorationMetadata {
+    int protocolVersion{1};
+    QString requestId;
+    ProcessingStage stage{ProcessingStage::Completed};
+    ConfidenceLevel confidence{ConfidenceLevel::Unknown};
+    QStringList confidenceReasons;
+    ExecutionMode executionMode{ExecutionMode::Baseline};
+    QString modelVersion;
+    RemovalError fallbackReason{RemovalError::None};
 };
 
 using CancellationCheck = std::function<bool()>;
+using ProgressCallback = std::function<void(const RemovalProgress&)>;
 
 struct RemovalOptions {
     int colorDifferenceThreshold{55};
@@ -31,6 +79,7 @@ struct RemovalResult {
     QImage restored;
     RemovalError error{RemovalError::None};
     QString message;
+    RestorationMetadata metadata;
 };
 
 class IHandwritingRemovalEngine {
@@ -39,6 +88,14 @@ public:
     [[nodiscard]] virtual RemovalResult detectAndRemove(
         const QImage& image, const RemovalOptions& options = {},
         const CancellationCheck& cancelled = {}) const = 0;
+    [[nodiscard]] virtual RemovalResult detectAndRemoveWithProgress(
+        const QImage& image, const RemovalOptions& options,
+        const ProgressCallback& progress,
+        const CancellationCheck& cancelled = {}) const
+    {
+        (void)progress;
+        return detectAndRemove(image, options, cancelled);
+    }
     [[nodiscard]] virtual RemovalResult removeWithMask(
         const QImage& image, const QImage& mask,
         const RemovalOptions& options = {},

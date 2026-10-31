@@ -71,10 +71,36 @@ cmake --build build-package --config Release --parallel
 
 构建脚本会固定 Python 依赖版本、对官方模型归档执行 SHA-256 校验、运行 PaddleOCR Worker 自检，并收集第三方许可证清单。Windows、macOS Intel 和 Apple Silicon 安装包均通过原生 CI 构建 Worker。
 
+## 试卷还原运行时
+
+导入或拖入受支持的试卷照片后，工具会自动开始处理并打开结果。仓库已实现版本化本地 Worker 协议、确定性全分辨率分块融合、40 MP 上限、取消和超时、Mask 外像素硬拷贝、基础模式回退、可选 Mask 编辑及 PNG 导出。没有获批模型时，界面明确显示“基础模式”，不会把规则算法描述为 AI 模型结果。
+
+生产模型发布默认关闭。`packaging/exam-restoration-models.json` 当前没有制品，因为 HandWritingEraser 外链 checkpoint 尚无可独立核验的不可变来源、实际架构、精确字节数、SHA-256、许可证文本和再分发批准，H0 至 H4 的质量及三平台证据也尚未建立。该 checkpoint 不会被下载、镜像或打包。
+
+`scripts/build_exam_restoration_runtime.py` 只接受完整获批的单模型清单。脚本会在下载前检查不可变 HTTPS 来源、精确字节数、SHA-256、用途、许可证和再分发批准，随后固定 Python 依赖、生成 PyInstaller Worker、收集许可证并执行自检。可以检查当前门禁状态：
+
+```bash
+python scripts/build_exam_restoration_runtime.py --manifest-status
+```
+
+输出 `disabled` 表示发布继续使用已测试的基础模式。只有清单加入完整获批制品后，Windows x64、macOS Intel 和 macOS Apple Silicon 发布任务才会生成、安装、自检并离线解析独立的 `exam-restoration-runtime`。启用的本地发布构建必须显式要求完整运行时：
+
+```bash
+python scripts/build_exam_restoration_runtime.py \
+  --output build/exam-restoration-runtime-staged \
+  --work build/exam-restoration-runtime-build
+cmake -S . -B build-package \
+  -DREQUIRE_BUNDLED_EXAM_RESTORATION=ON \
+  -DMINITREASUREBOX_EXAM_RESTORATION_RUNTIME_ROOT="$PWD/build/exam-restoration-runtime-staged"
+```
+
+缺少 Worker、模型、哈希匹配的自检元数据或许可证时，启用的 CMake 配置会失败。应用不会回退到系统 Python，也不会在运行时下载模型。
+
 ## 项目文档
 
 - [产品文档](docs/product/product-requirements.md)
 - [技术文档](docs/technical/technical-design.md)
+- [试卷照片自动还原方案](docs/technical/exam-restoration-solution.md)
 - [整体 UI 设计方案](docs/design/ui-design-plan.md)
 - [非游戏小工具 UI 设计规范](docs/design/tool-ui-style-guide.md)
 - [小游戏 UI 设计规范](docs/design/game-ui-style-guide.md)

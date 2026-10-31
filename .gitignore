@@ -10,6 +10,18 @@ compile_commands.json
 # Python packaging script caches
 __pycache__/
 *.py[cod]
+/exam-restoration-runtime*/
+
+# Private exam-restoration training and generated artifacts
+/ml/exam_restoration/data/
+/ml/exam_restoration/datasets/manifests/
+/ml/exam_restoration/datasets/splits/
+/ml/exam_restoration/checkpoints/
+/ml/exam_restoration/outputs/
+/ml/exam_restoration/runs/
+/ml/exam_restoration/**/*.onnx
+/ml/exam_restoration/**/*.pt
+/ml/exam_restoration/**/*.pth
 
 # IDE and platform files
 .vscode/

@@ -1,6 +1,7 @@
 #include "app/application.h"
 
 #include "app/main_window.h"
+#include "ai/handwriting_removal/restoration_engine.h"
 #include "core/settings.h"
 #include "core/tool_history.h"
 #include "core/tool_registry.h"
@@ -17,6 +18,7 @@ Application::Application(int& argc, char** argv)
     QCoreApplication::setOrganizationDomain(QStringLiteral("minitreasurebox.local"));
     QCoreApplication::setApplicationName(QStringLiteral("MiniTreasureBox"));
     QCoreApplication::setApplicationVersion(QStringLiteral(MINITREASUREBOX_VERSION));
+    handwriting::RestorationWorkerEngine::cleanupStaleTasks();
     setQuitOnLastWindowClosed(true);
 }
 
