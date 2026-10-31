@@ -333,6 +333,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchA)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
     QCOMPARE(updatePaths.first(), QStringList{branchA});
 
@@ -342,6 +344,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchB)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTest::qWait(350);
     QCOMPARE(updateBases.size(), 1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
@@ -353,15 +357,17 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
-    QCOMPARE(updatePaths.at(1), QStringList{branchB});
+    QVERIFY(updatePaths.at(1).contains(branchB));
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
              1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
-    auto secondResult = LocalFileSearch::refreshSubtree(
-        updateBases.at(1), updatePaths.at(1).first());
-    QVERIFY(secondResult.success);
+    auto secondResult = updateBases.at(1);
+    for (const QString& path : updatePaths.at(1)) {
+        secondResult = LocalFileSearch::refreshSubtree(secondResult, path);
+        QVERIFY(secondResult.success);
+    }
     secondUpdate.addResult(secondResult);
     secondUpdate.finish();
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 3000);

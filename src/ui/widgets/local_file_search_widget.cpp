@@ -215,6 +215,8 @@ void LocalFileSearchWidget::beginIndexBuild()
     updateTimer_->stop();
     indexUpdateInProgress_ = false;
     pendingChangedPaths_.clear();
+    activeUpdatePaths_.clear();
+    recentlyRefreshedPaths_.clear();
     if (!fileWatcher_->directories().isEmpty()) {
         fileWatcher_->removePaths(fileWatcher_->directories());
     }
@@ -309,7 +311,36 @@ void LocalFileSearchWidget::queueChangedPath(const QString& path)
     if (!index_.ready || path.isEmpty()) {
         return;
     }
-    pendingChangedPaths_.insert(QDir::cleanPath(path));
+    const QString normalized = QDir::cleanPath(path);
+    if (indexUpdateInProgress_
+        && std::any_of(activeUpdatePaths_.cbegin(), activeUpdatePaths_.cend(),
+                       [&normalized](const QString& activePath) {
+                           const QString relative = QDir::fromNativeSeparators(
+                               QDir(activePath).relativeFilePath(normalized));
+                           return relative == QStringLiteral(".")
+                               || (!QDir::isAbsolutePath(relative)
+                                   && relative != QStringLiteral("..")
+                                   && !relative.startsWith(QStringLiteral("../")));
+                       })) {
+        // QFileSystemWatcher can deliver the same directory event after the
+        // corresponding refresh has already started. The refresh scans the
+        // active subtree itself, so queuing that late duplicate would cause a
+        // redundant overlapping update.
+        return;
+    }
+    if (!indexUpdateInProgress_
+        && std::any_of(recentlyRefreshedPaths_.cbegin(), recentlyRefreshedPaths_.cend(),
+                       [&normalized](const QString& refreshedPath) {
+                           const QString relative = QDir::fromNativeSeparators(
+                               QDir(refreshedPath).relativeFilePath(normalized));
+                           return relative == QStringLiteral(".")
+                               || (!QDir::isAbsolutePath(relative)
+                                   && relative != QStringLiteral("..")
+                                   && !relative.startsWith(QStringLiteral("../")));
+                       })) {
+        return;
+    }
+    pendingChangedPaths_.insert(normalized);
     updateTimer_->start();
 }
 
@@ -348,12 +379,13 @@ void LocalFileSearchWidget::applyPendingUpdates()
     }
     debounceTimer_->stop();
     status_->setText(tr("正在后台更新文件索引…"));
+    activeUpdatePaths_ = coalesced;
     indexUpdateInProgress_ = true;
     indexCancellation_ = std::make_shared<std::atomic_bool>(false);
 
     auto* watcher = new QFutureWatcher<LocalFileSearchIndexResult>(this);
     connect(watcher, &QFutureWatcher<LocalFileSearchIndexResult>::finished, this,
-            [this, watcher, generation] {
+            [this, watcher, generation, coalesced] {
                 const LocalFileSearchIndexResult result = watcher->result();
                 watcher->deleteLater();
                 if (generation != indexGeneration_) {
@@ -361,6 +393,7 @@ void LocalFileSearchWidget::applyPendingUpdates()
                 }
                 indexCancellation_.reset();
                 indexUpdateInProgress_ = false;
+                activeUpdatePaths_.clear();
                 if (!result.success) {
                     index_.ready = false;
                     pendingChangedPaths_.clear();
@@ -369,6 +402,27 @@ void LocalFileSearchWidget::applyPendingUpdates()
                     emit indexStateChanged();
                     return;
                 }
+                for (auto pending = pendingChangedPaths_.begin();
+                     pending != pendingChangedPaths_.end();) {
+                    const bool alreadyRefreshed = std::any_of(
+                        coalesced.cbegin(), coalesced.cend(), [&pending](const QString& activePath) {
+                            const QString relative = QDir::fromNativeSeparators(
+                                QDir(activePath).relativeFilePath(*pending));
+                            return relative == QStringLiteral(".")
+                                || (!QDir::isAbsolutePath(relative)
+                                    && relative != QStringLiteral("..")
+                                    && !relative.startsWith(QStringLiteral("../")));
+                        });
+                    if (alreadyRefreshed) {
+                        pending = pendingChangedPaths_.erase(pending);
+                    } else {
+                        ++pending;
+                    }
+                }
+                recentlyRefreshedPaths_ = QSet<QString>(coalesced.cbegin(), coalesced.cend());
+                QTimer::singleShot(100, this, [this] {
+                    recentlyRefreshedPaths_.clear();
+                });
                 index_ = result.index;
                 const bool addedDirectoryWatches = configureWatcher();
                 if (addedDirectoryWatches) {

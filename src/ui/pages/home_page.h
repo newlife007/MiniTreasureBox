@@ -56,6 +56,7 @@ private:
     QStringList categories_;
 
     QLabel* heading_;
+    QLabel* subtitle_;
     QComboBox* searchMode_;
     QLineEdit* search_;
     QLabel* resultState_;

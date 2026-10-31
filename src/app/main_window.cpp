@@ -8,6 +8,7 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
+#include <QFont>
 #include <QFormLayout>
 #include <QFrame>
 #include <QLabel>
@@ -37,6 +38,126 @@ QListWidgetItem* addNavigationItem(QListWidget* list, const QString& text,
     item->setData(kCategoryRole, category);
     return item;
 }
+
+QString themeStyleSheet(Theme theme)
+{
+    const bool dark = theme == Theme::Dark
+        || (theme == Theme::System
+            && QApplication::style()->standardPalette().color(QPalette::Window).lightness() < 128);
+    const QString background = dark ? QStringLiteral("#111521") : QStringLiteral("#F5F6FA");
+    const QString surface = dark ? QStringLiteral("#1B2130") : QStringLiteral("#FFFFFF");
+    const QString secondarySurface = dark ? QStringLiteral("#232A3B") : QStringLiteral("#F5F6FA");
+    const QString text = dark ? QStringLiteral("#F4F6FA") : QStringLiteral("#172033");
+    const QString muted = dark ? QStringLiteral("#A6AEC0") : QStringLiteral("#667085");
+    const QString border = dark ? QStringLiteral("#30384B") : QStringLiteral("#E6E8EF");
+    const QString primary = dark ? QStringLiteral("#8B83FF") : QStringLiteral("#665CF2");
+    const QString primarySurface = dark ? QStringLiteral("#302C5B") : QStringLiteral("#EEECFF");
+    const QString success = dark ? QStringLiteral("#55D0AE") : QStringLiteral("#19A982");
+
+    return QStringLiteral(R"(
+        QWidget#mainCentral { background: %1; }
+        QWidget#sidebar { background: %2; }
+        QStackedWidget#mainPages { background: %1; border: none; }
+            background: %2;
+            border: none;
+            outline: none;
+            padding: 8px 8px;
+            color: %3;
+        }
+        QListWidget#mainNavigation::item {
+            border-radius: 10px;
+            padding: 10px 12px;
+            margin: 2px 0;
+            color: %4;
+        }
+        QListWidget#mainNavigation::item:hover { background: %5; }
+        QListWidget#mainNavigation::item:selected {
+            background: %6;
+            color: %7;
+            border-left: 3px solid %7;
+        }
+        QLabel#brandMark { background: %7; border-radius: 12px; color: white; font-size: 22px; font-weight: 700; }
+        QLabel#brandTitle { color: %3; font-size: 15px; font-weight: 700; }
+        QLabel#brandSubtitle { color: %8; font-size: 11px; }
+        QFrame#localStatusCard { background: %5; border: 1px solid %9; border-radius: 12px; }
+        QLabel#localStatusTitle { color: %3; font-size: 12px; font-weight: 600; }
+        QLabel#localStatusDescription { color: %8; font-size: 11px; }
+        QLabel#pageHeading { color: %3; font-size: 26px; font-weight: 700; }
+        QLabel#pageSubtitle { color: %8; font-size: 14px; }
+        QFrame#searchSurface {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 15px;
+        }
+        QComboBox#searchModeSelector {
+            background: %10;
+            border: none;
+            border-radius: 8px;
+            color: %7;
+            padding: 7px 10px;
+            font-weight: 600;
+        }
+        QLineEdit#globalSearch {
+            background: transparent;
+            border: none;
+            color: %3;
+            padding: 8px 12px;
+            selection-background-color: %7;
+        }
+        QLabel#resultState { color: %8; padding: 18px; }
+        QLabel#privacyHint { color: %8; font-size: 12px; }
+        QScrollArea#toolGrid { background: transparent; border: none; }
+        QPushButton#favoriteButton {
+            background: transparent;
+            border: none;
+            color: #F0B84B;
+            font-size: 19px;
+            padding: 2px;
+        }
+        QPushButton#favoriteButton:hover { color: #D99A24; }
+        QPushButton#openButton {
+            background: %7;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            padding: 7px 12px;
+            font-weight: 600;
+        }
+        QPushButton#openButton:hover { background: %11; }
+        QLabel[iconTile="true"] { background: %10; border-radius: 12px; }
+        QLabel#toolName { color: %3; font-size: 16px; font-weight: 700; }
+        QLabel#toolDescription { color: %4; }
+        QLabel#toolCategory { color: %8; }
+        QLabel#toolNetworkState { color: %12; }
+        QLineEdit#localSearchRoot, QListWidget#localSearchResults {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 10px;
+            color: %3;
+        }
+        QLabel#localSearchStatus { color: %8; padding: 8px 0; }
+        QPushButton#chooseSearchRoot, QPushButton#rebuildSearchIndex {
+            background: %10;
+            border: 1px solid %9;
+            border-radius: 8px;
+            color: %7;
+            padding: 8px 12px;
+            font-weight: 600;
+        }
+    )")
+        .arg(background)
+        .arg(surface)
+        .arg(text)
+        .arg(muted)
+        .arg(secondarySurface)
+        .arg(primarySurface)
+        .arg(primary)
+        .arg(muted)
+        .arg(border)
+        .arg(primarySurface)
+        .arg(dark ? QStringLiteral("#756CF0") : QStringLiteral("#554CD8"))
+        .arg(success);
+}
 }  // namespace
 
 MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& history,
@@ -52,8 +173,8 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
     setWindowTitle(tr("小小百宝箱"));
     navigation_->setObjectName(QStringLiteral("mainNavigation"));
     pages_->setObjectName(QStringLiteral("mainPages"));
-    navigation_->setMaximumWidth(190);
-    navigation_->setMinimumWidth(150);
+    navigation_->setMaximumWidth(198);
+    navigation_->setMinimumWidth(178);
     navigation_->setSpacing(2);
 
     buildNavigation();
@@ -63,12 +184,53 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
 
     auto* separator = new QFrame(this);
     separator->setFrameShape(QFrame::VLine);
-    separator->setFrameShadow(QFrame::Sunken);
+    separator->setFrameShadow(QFrame::Plain);
+
+    auto* sidebar = new QWidget(this);
+    sidebar->setObjectName(QStringLiteral("sidebar"));
+    sidebar->setMinimumWidth(220);
+    sidebar->setMaximumWidth(230);
+    auto* sidebarLayout = new QVBoxLayout(sidebar);
+    sidebarLayout->setContentsMargins(12, 18, 12, 18);
+    sidebarLayout->setSpacing(10);
+
+    auto* brandRow = new QHBoxLayout;
+    brandRow->setContentsMargins(4, 0, 4, 8);
+    auto* brandMark = new QLabel(QStringLiteral("◈"), sidebar);
+    brandMark->setObjectName(QStringLiteral("brandMark"));
+    brandMark->setAlignment(Qt::AlignCenter);
+    brandMark->setFixedSize(38, 38);
+    auto* brandText = new QVBoxLayout;
+    auto* brandTitle = new QLabel(tr("小小百宝箱"), sidebar);
+    brandTitle->setObjectName(QStringLiteral("brandTitle"));
+    auto* brandSubtitle = new QLabel(QStringLiteral("MiniTreasureBox"), sidebar);
+    brandSubtitle->setObjectName(QStringLiteral("brandSubtitle"));
+    brandText->addWidget(brandTitle);
+    brandText->addWidget(brandSubtitle);
+    brandRow->addWidget(brandMark);
+    brandRow->addLayout(brandText, 1);
+    sidebarLayout->addLayout(brandRow);
+    sidebarLayout->addWidget(navigation_, 1);
+
+    auto* localStatus = new QFrame(sidebar);
+    localStatus->setObjectName(QStringLiteral("localStatusCard"));
+    auto* localStatusLayout = new QVBoxLayout(localStatus);
+    localStatusLayout->setContentsMargins(12, 10, 12, 10);
+    localStatusLayout->setSpacing(2);
+    auto* localStatusTitle = new QLabel(tr("●  全部在本机运行"), localStatus);
+    localStatusTitle->setObjectName(QStringLiteral("localStatusTitle"));
+    auto* localStatusDescription = new QLabel(tr("不会自动上传你的内容"), localStatus);
+    localStatusDescription->setObjectName(QStringLiteral("localStatusDescription"));
+    localStatusLayout->addWidget(localStatusTitle);
+    localStatusLayout->addWidget(localStatusDescription);
+    sidebarLayout->addWidget(localStatus);
 
     auto* central = new QWidget(this);
+    central->setObjectName(QStringLiteral("mainCentral"));
     auto* layout = new QHBoxLayout(central);
-    layout->setContentsMargins(8, 8, 8, 8);
-    layout->addWidget(navigation_);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(sidebar);
     layout->addWidget(separator);
     layout->addWidget(pages_, 1);
     setCentralWidget(central);
@@ -327,6 +489,9 @@ void MainWindow::applyTheme(Theme theme)
         palette.setColor(QPalette::HighlightedText, Qt::white);
     }
     QApplication::setPalette(palette);
+    if (centralWidget()) {
+        centralWidget()->setStyleSheet(themeStyleSheet(theme));
+    }
 }
 
 }  // namespace mtb
