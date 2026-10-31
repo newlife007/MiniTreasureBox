@@ -333,6 +333,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchA)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
     QCOMPARE(updatePaths.first(), QStringList{branchA});
 
@@ -342,6 +344,8 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
                                       Q_ARG(QString, branchB)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTest::qWait(350);
     QCOMPARE(updateBases.size(), 1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));

@@ -56,6 +56,7 @@ signals:
 
 private slots:
     void queueChangedPath(const QString& path);
+    void applyPendingUpdates();
 
 private:
     void beginIndexBuild();
