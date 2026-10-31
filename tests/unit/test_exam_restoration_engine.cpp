@@ -217,7 +217,13 @@ void ExamRestorationEngineTest::failsClosedAgainstImplicitRuntimeDiscovery()
 
     ScopedEnvironment workerOverride("MINITREASUREBOX_EXAM_RESTORATION_WORKER", {});
     ScopedEnvironment modelOverride("MINITREASUREBOX_EXAM_RESTORATION_MODELS", {});
-    ScopedEnvironment path("PATH", hostile.toLocal8Bit());
+    QByteArray hostilePath = hostile.toLocal8Bit();
+    const QByteArray originalPath = qgetenv("PATH");
+    if (!originalPath.isEmpty()) {
+        hostilePath.append(QDir::listSeparator().toLatin1());
+        hostilePath.append(originalPath);
+    }
+    ScopedEnvironment path("PATH", hostilePath);
     ScopedCurrentDirectory current(hostile);
     QVERIFY(current.changed());
 
