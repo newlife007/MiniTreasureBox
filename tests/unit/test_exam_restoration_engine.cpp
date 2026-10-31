@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -215,37 +216,40 @@ void ExamRestorationEngineTest::failsClosedAgainstImplicitRuntimeDiscovery()
     QCOMPARE(model.write("fixture"), 7);
     model.close();
 
-    ScopedEnvironment workerOverride("MINITREASUREBOX_EXAM_RESTORATION_WORKER", {});
-    ScopedEnvironment modelOverride("MINITREASUREBOX_EXAM_RESTORATION_MODELS", {});
-    QByteArray hostilePath = hostile.toLocal8Bit();
-    const QByteArray originalPath = qgetenv("PATH");
-    if (!originalPath.isEmpty()) {
-        hostilePath.append(QDir::listSeparator().toLatin1());
-        hostilePath.append(originalPath);
+    {
+        ScopedEnvironment workerOverride("MINITREASUREBOX_EXAM_RESTORATION_WORKER", {});
+        ScopedEnvironment modelOverride("MINITREASUREBOX_EXAM_RESTORATION_MODELS", {});
+        ScopedEnvironment path("PATH", hostile.toLocal8Bit());
+        ScopedCurrentDirectory current(hostile);
+        QVERIFY(current.changed());
+
+        const QString discoveredWorker = QStandardPaths::findExecutable(
+            QStringLiteral("exam-restoration-worker"));
+        QVERIFY2(!discoveredWorker.isEmpty(),
+                 "The hostile worker must be discoverable by executable-name lookup");
+        QCOMPARE(QFileInfo(discoveredWorker).canonicalFilePath(),
+                 QFileInfo(worker).canonicalFilePath());
+
+        const RestorationRuntimeConfig unresolved =
+            RestorationWorkerEngine::resolvedConfig({}, application);
+        QVERIFY(unresolved.workerExecutable.isEmpty());
+        QVERIFY(unresolved.modelRoot.isEmpty());
+        const RemovalResult fallback = RestorationWorkerEngine().restore(
+            {page(), {}, QStringLiteral("hostile-search-path"), {}});
+        QVERIFY(fallback.ok);
+        QCOMPARE(fallback.metadata.executionMode, ExecutionMode::Baseline);
+        QCOMPARE(fallback.metadata.fallbackReason, RemovalError::RuntimeMissing);
+
+        RestorationRuntimeConfig partial;
+        partial.workerExecutable = QStringLiteral("exam-restoration-worker");
+        const RestorationRuntimeConfig rejected =
+            RestorationWorkerEngine::resolvedConfig(partial, application);
+        QVERIFY(rejected.workerExecutable.isEmpty());
+        QVERIFY(rejected.modelRoot.isEmpty());
     }
-    ScopedEnvironment path("PATH", hostilePath);
-    ScopedCurrentDirectory current(hostile);
-    QVERIFY(current.changed());
-
-    const RestorationRuntimeConfig unresolved =
-        RestorationWorkerEngine::resolvedConfig({}, application);
-    QVERIFY(unresolved.workerExecutable.isEmpty());
-    QVERIFY(unresolved.modelRoot.isEmpty());
-    const RemovalResult fallback = RestorationWorkerEngine().restore(
-        {page(), {}, QStringLiteral("hostile-search-path"), {}});
-    QVERIFY(fallback.ok);
-    QCOMPARE(fallback.metadata.executionMode, ExecutionMode::Baseline);
-    QCOMPARE(fallback.metadata.fallbackReason, RemovalError::RuntimeMissing);
-
-    RestorationRuntimeConfig partial;
-    partial.workerExecutable = QStringLiteral("exam-restoration-worker");
-    const RestorationRuntimeConfig rejected =
-        RestorationWorkerEngine::resolvedConfig(partial, application);
-    QVERIFY(rejected.workerExecutable.isEmpty());
-    QVERIFY(rejected.modelRoot.isEmpty());
 
     RestorationRuntimeConfig explicitPair;
-    explicitPair.workerExecutable = QStringLiteral("exam-restoration-worker");
+    explicitPair.workerExecutable = fixtureExecutable();
     explicitPair.modelRoot = hostile;
     const RemovalResult explicitResult = RestorationWorkerEngine(explicitPair).restore(
         {page(), {}, QStringLiteral("explicit-pair"), {}});
