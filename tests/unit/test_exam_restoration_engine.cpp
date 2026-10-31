@@ -281,8 +281,11 @@ void ExamRestorationEngineTest::enforcesTimeoutCancellationPixelBudgetAndCleanup
             {input, {}, QStringLiteral("cumulative-timed"), {}});
         QVERIFY(!timed.ok);
         QCOMPARE(timed.error, RemovalError::TimedOut);
-        QVERIFY2(elapsed.elapsed() < 320,
-                 "Self-test and inference must share one operation deadline");
+        const qint64 elapsedMs = elapsed.elapsed();
+        QVERIFY2(elapsedMs < 320,
+                 qPrintable(QStringLiteral(
+                     "Self-test and inference must share one operation deadline; elapsed %1 ms")
+                                .arg(elapsedMs)));
     }
 
     std::atomic_bool cancel{false};
