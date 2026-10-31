@@ -31,6 +31,9 @@ int main(int argc, char* argv[])
     const QStringList arguments = application.arguments();
     const QByteArray mode = qgetenv("MINITREASUREBOX_FAKE_RESTORATION_MODE");
     if (arguments.contains(QStringLiteral("--self-test"))) {
+        if (mode == "cumulative-timeout") {
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        }
         if (mode == "self-test-fail") {
             writeObject({{QStringLiteral("ok"), false},
                          {QStringLiteral("schema_version"), 1},
@@ -46,6 +49,9 @@ int main(int argc, char* argv[])
     const QString requestId = argumentValue(arguments, QStringLiteral("--request-id"));
     if (mode == "timeout") {
         std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+    if (mode == "cumulative-timeout") {
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
     }
     if (mode == "crash") {
         std::abort();

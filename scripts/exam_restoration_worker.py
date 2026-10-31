@@ -24,20 +24,20 @@ MAX_PIXELS = 40_000_000
 CLASS_BACKGROUND = 0
 CLASS_HANDWRITING = 1
 CLASS_PRINT = 2
-PROBABILITY_SCALE = 1_000_000
+PROBABILITY_SCALE = 65_535
 
 
 def tile_origins(length: int, tile_size: int = TILE_SIZE,
                  overlap: int = TILE_OVERLAP) -> list[int]:
+    """Return fixed-stride origins, leaving the terminal tile to be padded."""
     if length <= 0 or tile_size <= 0 or overlap < 0 or overlap >= tile_size:
         raise ValueError("Invalid image or tile dimensions")
     if length <= tile_size:
         return [0]
     stride = tile_size - overlap
-    origins = list(range(0, length - tile_size + 1, stride))
-    final = length - tile_size
-    if origins[-1] != final:
-        origins.append(final)
+    origins = [0]
+    while origins[-1] + tile_size < length:
+        origins.append(origins[-1] + stride)
     return origins
 
 
@@ -52,10 +52,13 @@ def tile_coordinates(width: int, height: int, tile_size: int = TILE_SIZE,
     return list(reversed(coordinates)) if reverse else coordinates
 
 
-def _axis_weight(index: int, length: int, overlap: int) -> int:
+def _axis_weight(index: int, length: int, overlap: int,
+                 touches_start: bool = False, touches_end: bool = False) -> int:
     if overlap <= 0:
         return 1
-    return min(index + 1, length - index, overlap + 1)
+    start_weight = overlap + 1 if touches_start else min(index + 1, overlap + 1)
+    end_weight = overlap + 1 if touches_end else min(length - index, overlap + 1)
+    return min(start_weight, end_weight)
 
 
 def fuse_probability_tiles(
@@ -76,11 +79,19 @@ def fuse_probability_tiles(
         for local_y, row in enumerate(probabilities):
             if len(row) != tile_width or origin_y + local_y >= height:
                 raise ValueError("Tile is outside the output")
-            weight_y = _axis_weight(local_y, tile_height, overlap)
+            weight_y = _axis_weight(
+                local_y, tile_height, overlap,
+                touches_start=origin_y == 0,
+                touches_end=origin_y + tile_height == height,
+            )
             for local_x, probability in enumerate(row):
                 if len(probability) != 3 or origin_x + local_x >= width:
                     raise ValueError("Tile probability shape must end in three classes")
-                weight = weight_y * _axis_weight(local_x, tile_width, overlap)
+                weight = weight_y * _axis_weight(
+                    local_x, tile_width, overlap,
+                    touches_start=origin_x == 0,
+                    touches_end=origin_x + tile_width == width,
+                )
                 cell = sums[origin_y + local_y][origin_x + local_x]
                 for class_index in range(3):
                     value = float(probability[class_index])
@@ -238,14 +249,54 @@ def _softmax(logits):
     return exponent / np.sum(exponent, axis=1, keepdims=True)
 
 
+def conservative_mask_array(classes, dilation_radius: int = 1):
+    """Apply the production Mask filter with bounded NumPy byte arrays."""
+    import numpy as np
+
+    if classes.ndim != 2 or classes.size == 0:
+        raise ValueError("Invalid class map")
+    handwriting = classes == CLASS_HANDWRITING
+    adjacent = np.zeros(classes.shape, dtype=np.bool_)
+    adjacent[1:, :] |= handwriting[:-1, :]
+    adjacent[:-1, :] |= handwriting[1:, :]
+    adjacent[:, 1:] |= handwriting[:, :-1]
+    adjacent[:, :-1] |= handwriting[:, 1:]
+    accepted = handwriting & adjacent
+    if dilation_radius <= 0:
+        return accepted.astype(np.uint8)
+    if dilation_radius != 1:
+        raise ValueError("Production dilation radius must be one")
+    expanded = accepted.copy()
+    printable = classes != CLASS_PRINT
+    height, width = classes.shape
+    for offset_y in range(-1, 2):
+        source_y = slice(max(0, -offset_y), min(height, height - offset_y))
+        target_y = slice(max(0, offset_y), min(height, height + offset_y))
+        for offset_x in range(-1, 2):
+            source_x = slice(max(0, -offset_x), min(width, width - offset_x))
+            target_x = slice(max(0, offset_x), min(width, width + offset_x))
+            expanded[target_y, target_x] |= (
+                accepted[source_y, source_x] & printable[target_y, target_x]
+            )
+    return expanded.astype(np.uint8)
+
+
+def fusion_accumulator_bytes(width: int, height: int) -> int:
+    """Return the fixed uint32 fusion allocation, excluding model tile tensors."""
+    if width <= 0 or height <= 0 or width > MAX_PIXELS // height:
+        raise ValueError("Invalid image dimensions")
+    return width * height * 4 * 4
+
+
 def infer_page(session, rgb, reverse: bool = False):
+    """Infer classes with exact uint32 fusion and a 16-byte-per-pixel accumulator."""
     import numpy as np
 
     height, width, channels = rgb.shape
     if channels != 3:
         raise ValueError("Expected RGB input")
-    sums = np.zeros((height, width, 3), dtype=np.int64)
-    weights = np.zeros((height, width), dtype=np.int64)
+    sums = np.zeros((height, width, 3), dtype=np.uint32)
+    weights = np.zeros((height, width), dtype=np.uint32)
     input_name = session.get_inputs()[0].name
     coordinates = tile_coordinates(width, height, reverse=reverse)
     for origin_x, origin_y, tile_width, tile_height in coordinates:
@@ -260,16 +311,33 @@ def infer_page(session, rgb, reverse: bool = False):
         if logits.ndim != 4 or logits.shape[1] != 3:
             raise ValueError("Model output must be NCHW with three classes")
         probability = _softmax(logits)[0, :, :tile_height, :tile_width]
-        quantized = np.rint(probability * PROBABILITY_SCALE).astype(np.int64)
-        axis_x = np.array([_axis_weight(x, tile_width, TILE_OVERLAP)
-                           for x in range(tile_width)], dtype=np.int64)
-        axis_y = np.array([_axis_weight(y, tile_height, TILE_OVERLAP)
-                           for y in range(tile_height)], dtype=np.int64)
+        quantized = np.rint(probability * PROBABILITY_SCALE).astype(np.uint32)
+        axis_x = np.array([
+            _axis_weight(
+                x, tile_width, TILE_OVERLAP,
+                touches_start=origin_x == 0,
+                touches_end=origin_x + tile_width == width,
+            ) for x in range(tile_width)
+        ], dtype=np.uint32)
+        axis_y = np.array([
+            _axis_weight(
+                y, tile_height, TILE_OVERLAP,
+                touches_start=origin_y == 0,
+                touches_end=origin_y + tile_height == height,
+            ) for y in range(tile_height)
+        ], dtype=np.uint32)
         tile_weights = axis_y[:, None] * axis_x[None, :]
         target = sums[origin_y:origin_y + tile_height, origin_x:origin_x + tile_width]
         target += np.transpose(quantized, (1, 2, 0)) * tile_weights[:, :, None]
         weights[origin_y:origin_y + tile_height, origin_x:origin_x + tile_width] += tile_weights
-    return sums, weights, np.argmax(sums, axis=2).astype(np.uint8)
+    if np.any(weights == 0):
+        raise ValueError("Tiles do not cover the output")
+    classes = (sums[:, :, CLASS_HANDWRITING]
+               > sums[:, :, CLASS_BACKGROUND]).astype(np.uint8)
+    np.maximum(sums[:, :, CLASS_BACKGROUND], sums[:, :, CLASS_HANDWRITING],
+               out=weights)
+    classes[sums[:, :, CLASS_PRINT] > weights] = CLASS_PRINT
+    return classes
 
 
 def process(arguments: argparse.Namespace) -> dict[str, object]:
@@ -289,21 +357,21 @@ def process(arguments: argparse.Namespace) -> dict[str, object]:
         import numpy as np
 
         with Image.open(arguments.image) as opened:
-            image = opened.convert("RGB")
-        width, height = image.size
-        if width <= 0 or height <= 0 or width > MAX_PIXELS // height:
-            return {"ok": False, "schema_version": SCHEMA_VERSION,
-                    "request_id": arguments.request_id, "error": "resource_limit"}
-        rgb = np.asarray(image, dtype=np.uint8)
-        _, _, classes = infer_page(session, rgb, arguments.tile_order == "reverse")
-        mask_rows = conservative_mask(classes.tolist())
-        mask = np.asarray(mask_rows, dtype=np.uint8)
-        light_pixels = rgb[(mask == 0) & (np.mean(rgb, axis=2) >= 170)]
-        fill = np.median(light_pixels, axis=0).astype(np.uint8) if light_pixels.size else np.array([255, 255, 255], dtype=np.uint8)
-        candidate = np.empty_like(rgb)
-        candidate[:] = fill
+            width, height = opened.size
+            if width <= 0 or height <= 0 or width > MAX_PIXELS // height:
+                return {"ok": False, "schema_version": SCHEMA_VERSION,
+                        "request_id": arguments.request_id, "error": "resource_limit"}
+            rgb = np.array(opened.convert("RGB"), dtype=np.uint8, copy=True)
+        classes = infer_page(session, rgb, arguments.tile_order == "reverse")
+        mask = conservative_mask_array(classes)
+        del classes
+        sample = rgb[::8, ::8]
+        sample_brightness = sample.astype(np.uint16).sum(axis=2)
+        light_pixels = sample[(mask[::8, ::8] == 0) & (sample_brightness >= 3 * 170)]
+        fill = (np.median(light_pixels, axis=0).astype(np.uint8)
+                if light_pixels.size else np.array([255, 255, 255], dtype=np.uint8))
         restored = rgb.copy()
-        restored[mask != 0] = candidate[mask != 0]
+        restored[mask != 0] = fill
         Image.fromarray(mask * 255, mode="L").save(arguments.mask, format="PNG")
         Image.fromarray(restored, mode="RGB").save(arguments.output, format="PNG")
         ratio = float(np.count_nonzero(mask)) / float(width * height)

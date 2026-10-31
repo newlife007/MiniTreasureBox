@@ -43,13 +43,13 @@
 工具继续由 `src/domain/tools/builtin_tools.cpp` 以 `exam-restoration` 注册，并通过可注入的 `IHandwritingRemovalEngine` 保持 UI、规则基线与 Worker 集成分离。当前已经实现：
 
 - 导入或拖入图片后自动提交，不需要先点击“自动 Mask”；处理中显示“校正方向”“校正文档”“识别手写”“还原纸面”、总体进度和取消入口，成功后自动打开结果。
-- `RestorationWorkerEngine` 使用独立本地进程、固定 schema 和 request ID、1 MiB 协议上限、120 秒超时、task ID 陈旧结果保护及逐任务临时目录。运行时不可用、自检失败、崩溃或协议错误时回退 `BaselineHandwritingRemovalEngine` 并明确标为“基础模式”。
-- `scripts/exam_restoration_worker.py` 固定背景、手写、印刷三类映射以及 1024 像素瓦片和 128 像素重叠，执行与遍历顺序无关的整数加权融合。最终输出只在接受 Mask 内写入，Mask 外逐像素复制校正输入。
+- `RestorationWorkerEngine` 只接受安装包内成对出现的 Worker / 模型，或显式成对配置的开发覆盖；默认路径不会搜索 `PATH` 或当前工作目录。它使用独立本地进程、固定 schema 和 request ID、1 MiB 协议上限、覆盖自检、推理和基础回退的单一 120 秒总期限、task ID 陈旧结果保护及逐任务临时目录。运行时不可用、自检失败、崩溃或协议错误时，只在总期限尚有余量时回退 `BaselineHandwritingRemovalEngine` 并明确标为“基础模式”。
+- `scripts/exam_restoration_worker.py` 固定背景、手写、印刷三类映射以及 1024 像素瓦片和严格 128 像素重叠；末端不足 1024 像素的瓦片在模型输入处填充，不通过移动起点扩大重叠。融合使用与遍历顺序无关的 `uint32` 整数累计，每像素固定 16 bytes，而生产 Mask 后处理使用 NumPy 字节 / 布尔数组，不创建全页 Python 对象网格。最终输出只在接受 Mask 内写入，Mask 外逐像素复制校正输入。
 - `ml/exam_restoration/` 提供独立训练、评测和 ONNX 导出骨架。私有数据、checkpoint、ONNX 及评测输出均被忽略；仓库没有复制 HandWritingEraser 数据、checkpoint 或实现制品。
-- 假 Worker 端到端测试覆盖注册表导航、自动处理、生产运行时解析、协议、结果和 Mask 应用及 PNG 导出。规则基线、协议错误、超时、取消、崩溃、尺寸上限和临时清理均有自动化覆盖。
+- 假 Worker 端到端测试覆盖注册表导航、自动处理、生产运行时解析、协议、结果和 Mask 应用及 PNG 导出。规则基线、协议错误、单一总期限、取消、崩溃、尺寸上限、敌意 `PATH` / 当前目录以及仅清理本应用过期任务目录均有自动化覆盖。
 - 独立发布构建器要求完整权利元数据、不可变 HTTPS URL、精确字节数与 SHA-256，并收集模型及 Python 依赖许可证、生成 PyInstaller Worker 和保存自检元数据。CMake 可独立要求、部署和安装该运行时。
 
-生产模型仍未获批。`packaging/exam-restoration-models.json` 的 `artifacts` 当前为空，因此发布工作流默认不构建或安装生产还原运行时。HandWritingEraser 外链 checkpoint 的独立来源、实际架构、精确字节数、SHA-256、许可证文本及再分发批准仍未建立，H0 至 H4 也没有质量、ONNX、CPU 性能、可靠性、隐私、包体和三个原生平台的证据。当前实现只证明协议、确定性算法、基础模式和假运行时集成有效，不证明生产模型质量。
+生产模型仍未获批。`packaging/exam-restoration-models.json` 的 `artifacts` 当前为空，因此发布工作流默认不构建或安装生产还原运行时。HandWritingEraser 外链 checkpoint 的独立来源、实际架构、精确字节数、SHA-256、许可证文本及再分发批准仍未建立，H0 至 H4 也没有质量、ONNX、CPU 性能、可靠性、隐私、包体和三个原生平台的证据。40 MP 输入的融合累计数组已从约 1.28 GiB 的 `int64` 改为固定 640 MB 的 `uint32`，生产后处理也不再构建 Python 对象网格；这只是静态工作集边界，不替代 H3 要求的 12 MP 与 40 MP 应用加 Worker 峰值 RSS 实测。未取得获批 ONNX 模型前无法进行该生产尺寸实测，且清单必须继续为空。当前实现只证明协议、确定性算法、基础模式和假运行时集成有效，不证明生产模型质量或内存门禁已通过。
 
 仍待生产门禁完成的能力包括获批三分类权重、实测方向和几何校正模型，以及第 6 节全部质量与平台指标。任何缺口都不能通过填写推测元数据、降低门禁或把基础模式称为 AI 结果来绕过。
 
@@ -139,7 +139,7 @@ Paddle 文档报告 [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/main/en/ver
 
 - 默认全程本地处理，Worker 禁止网络访问。UI 显示“本地处理”，协议和日志不得包含图片内容或绝对用户路径。
 - 解码前检查格式和文件大小，解码后检查总像素、宽高、通道数及乘法溢出。初始建议上限为 40 MP，超限给出缩放副本选项，不覆盖原文件。
-- 临时目录按 task ID 隔离，使用最小权限；结果经校验后读取；成功、失败、取消和崩溃都清理临时文件。启动时清理过期任务目录。
+- 临时目录按 task ID 隔离，使用最小权限并写入本应用专用所有权标记；结果经校验后读取；成功、失败、取消和 Worker 崩溃都立即清理临时文件。应用启动和每次还原启动时只清理临时根目录直属、名称合法、标记内容匹配且超过 24 小时的本应用任务目录，不跟随符号链接，也不删除活跃或无标记目录。
 - Worker 使用有上限的 JSON 协议输出、固定 schema、request ID、阶段进度和结构化错误码。第三方 stdout / stderr 不得污染协议。
 - 每阶段检查取消；进程具备软取消和硬终止上限。总任务设置 120 秒硬超时，UI 关闭时不无限等待。
 - 新任务递增 task ID。任何 request ID 不匹配、页面已关闭或输入已替换的回调都丢弃，不能覆盖较新的结果。

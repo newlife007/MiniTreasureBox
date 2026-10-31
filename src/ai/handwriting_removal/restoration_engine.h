@@ -43,6 +43,7 @@ public:
     [[nodiscard]] static RestorationRuntimeConfig resolvedConfig(
         const RestorationRuntimeConfig& config,
         const QString& applicationDirPath = {});
+    static void cleanupStaleTasks(const QString& temporaryRoot = {});
 
 private:
     RestorationRuntimeConfig config_;

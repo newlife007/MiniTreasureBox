@@ -1,8 +1,10 @@
 #include "ai/handwriting_removal/restoration_engine.h"
 
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QJsonArray>
@@ -14,6 +16,7 @@
 #include <QThread>
 #include <QUuid>
 
+#include <algorithm>
 #include <utility>
 
 namespace mtb::handwriting {
@@ -22,6 +25,10 @@ namespace {
 constexpr int kProtocolVersion = 1;
 constexpr qsizetype kMaximumProtocolBytes = 1024 * 1024;
 constexpr int kTerminationWaitMs = 500;
+constexpr qint64 kStaleTaskAgeSeconds = 24 * 60 * 60;
+constexpr auto kTaskDirectoryPrefix = "minitreasurebox-restoration-";
+constexpr auto kTaskMarkerName = ".minitreasurebox-restoration-task-v1";
+constexpr auto kTaskMarkerContents = "MiniTreasureBox exam restoration task v1\n";
 
 RemovalResult failure(RemovalError error, const QString& message,
                       const QString& requestId = {})
@@ -67,10 +74,65 @@ QString workerName()
 
 bool hasModel(const QString& root)
 {
+    if (root.trimmed().isEmpty()) return false;
     const QFileInfo model(QDir(root).filePath(QStringLiteral("exam-restoration.onnx")));
     return model.exists() && model.isFile() && model.isReadable()
         && !model.canonicalFilePath().isEmpty()
         && QFileInfo(root).canonicalFilePath() == model.dir().canonicalPath();
+}
+
+QString taskRoot(const RestorationRuntimeConfig& runtime)
+{
+    return runtime.temporaryRoot.isEmpty() ? QDir::tempPath() : runtime.temporaryRoot;
+}
+
+void cleanupStaleTaskDirectories(const QString& rootPath)
+{
+    const QFileInfo rootInfo(rootPath);
+    if (!rootInfo.isDir() || rootInfo.isSymLink()) return;
+    const QString canonicalRoot = rootInfo.canonicalFilePath();
+    if (canonicalRoot.isEmpty()) return;
+
+    const QDateTime cutoff = QDateTime::currentDateTimeUtc().addSecs(-kStaleTaskAgeSeconds);
+    const QFileInfoList candidates = QDir(canonicalRoot).entryInfoList(
+        {QString::fromLatin1(kTaskDirectoryPrefix) + QStringLiteral("*")},
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::Readable);
+    for (const QFileInfo& candidate : candidates) {
+        if (candidate.isSymLink() || candidate.absoluteDir().canonicalPath() != canonicalRoot) {
+            continue;
+        }
+        const QString suffix = candidate.fileName().mid(
+            static_cast<qsizetype>(QString::fromLatin1(kTaskDirectoryPrefix).size()));
+        if (suffix.size() < 6 || suffix.size() > 64) continue;
+        bool safeSuffix = true;
+        for (const QChar character : suffix) {
+            if (!character.isLetterOrNumber() && character != u'_' && character != u'-') {
+                safeSuffix = false;
+                break;
+            }
+        }
+        if (!safeSuffix) continue;
+
+        const QFileInfo markerInfo(QDir(candidate.absoluteFilePath()).filePath(
+            QString::fromLatin1(kTaskMarkerName)));
+        if (!markerInfo.isFile() || markerInfo.isSymLink()
+            || markerInfo.lastModified().toUTC() >= cutoff) {
+            continue;
+        }
+        QFile marker(markerInfo.absoluteFilePath());
+        if (!marker.open(QIODevice::ReadOnly)) continue;
+        const bool owned = marker.readAll() == QByteArray(kTaskMarkerContents);
+        marker.close();
+        if (!owned) continue;
+        QDir(candidate.absoluteFilePath()).removeRecursively();
+    }
+}
+
+bool writeTaskMarker(const QTemporaryDir& directory)
+{
+    QFile marker(directory.filePath(QString::fromLatin1(kTaskMarkerName)));
+    if (!marker.open(QIODevice::WriteOnly | QIODevice::NewOnly)) return false;
+    return marker.write(kTaskMarkerContents) == QByteArray(kTaskMarkerContents).size();
 }
 
 void report(const RestorationRequest& request, ProcessingStage stage, int percent)
@@ -97,6 +159,7 @@ struct ProcessResult {
 ProcessResult runProcess(const QString& executable, const QStringList& arguments,
                          int timeoutMs, const CancellationCheck& cancelled)
 {
+    if (timeoutMs <= 0) return {{}, RemovalError::TimedOut};
     QProcess process;
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.setStandardErrorFile(QProcess::nullDevice());
@@ -165,7 +228,7 @@ QString safeFailureMessage(RemovalError error)
     case RemovalError::ModelDataMissing:
         return QStringLiteral("AI 还原组件不可用，已使用基础模式生成可编辑结果。");
     case RemovalError::TimedOut:
-        return QStringLiteral("AI 还原处理超时，已使用基础模式生成可编辑结果。");
+        return QStringLiteral("AI 还原处理超时。原图片未修改。");
     case RemovalError::ResourceLimit:
         return QStringLiteral("图片超出本地处理资源限制。原图片未修改。");
     case RemovalError::Cancelled:
@@ -179,15 +242,44 @@ QString safeFailureMessage(RemovalError error)
     }
 }
 
+int remainingTimeMs(const QElapsedTimer& timer, int timeoutMs)
+{
+    const qint64 remaining = static_cast<qint64>(timeoutMs) - timer.elapsed();
+    return static_cast<int>(std::clamp<qint64>(remaining, 0, timeoutMs));
+}
+
 RemovalResult baselineFallback(const BaselineHandwritingRemovalEngine& baseline,
                                const RestorationRequest& request,
                                RemovalError reason,
+                               const QElapsedTimer& deadlineTimer,
+                               int timeoutMs,
                                const CancellationCheck& cancelled)
 {
+    if (remainingTimeMs(deadlineTimer, timeoutMs) <= 0) {
+        return failure(RemovalError::TimedOut,
+                       safeFailureMessage(RemovalError::TimedOut), request.requestId);
+    }
+    const CancellationCheck boundedCancellation = [&] {
+        return (cancelled && cancelled())
+            || remainingTimeMs(deadlineTimer, timeoutMs) <= 0;
+    };
     RemovalResult result = baseline.detectAndRemove(request.correctedImage,
-                                                    request.options, cancelled);
-    if (!result.ok) return result;
-    result.message = safeFailureMessage(reason);
+                                                    request.options,
+                                                    boundedCancellation);
+    if (!result.ok) {
+        if (cancelled && cancelled()) {
+            return failure(RemovalError::Cancelled,
+                           safeFailureMessage(RemovalError::Cancelled), request.requestId);
+        }
+        if (remainingTimeMs(deadlineTimer, timeoutMs) <= 0) {
+            return failure(RemovalError::TimedOut,
+                           safeFailureMessage(RemovalError::TimedOut), request.requestId);
+        }
+        return result;
+    }
+    result.message = reason == RemovalError::TimedOut
+        ? QStringLiteral("AI 还原处理超时，已使用基础模式生成可编辑结果。")
+        : safeFailureMessage(reason);
     result.metadata.requestId = request.requestId;
     result.metadata.executionMode = ExecutionMode::Baseline;
     result.metadata.confidence = ConfidenceLevel::Low;
@@ -239,23 +331,43 @@ RestorationRuntimeConfig RestorationWorkerEngine::resolvedConfig(
         }
     }
 
-    resolved.workerExecutable = config.workerExecutable.trimmed();
-    if (resolved.workerExecutable.isEmpty()) {
-        resolved.workerExecutable = qEnvironmentVariable(
-            "MINITREASUREBOX_EXAM_RESTORATION_WORKER").trimmed();
-    }
-    if (resolved.workerExecutable.isEmpty()) resolved.workerExecutable = packagedWorker;
-    if (resolved.workerExecutable.isEmpty()) resolved.workerExecutable = workerName();
+    const QString configuredWorker = config.workerExecutable.trimmed();
+    const QString configuredModels = config.modelRoot.trimmed();
+    const QString environmentWorker = qEnvironmentVariable(
+        "MINITREASUREBOX_EXAM_RESTORATION_WORKER").trimmed();
+    const QString environmentModels = qEnvironmentVariable(
+        "MINITREASUREBOX_EXAM_RESTORATION_MODELS").trimmed();
 
-    resolved.modelRoot = config.modelRoot.trimmed();
-    if (resolved.modelRoot.isEmpty()) {
-        resolved.modelRoot = qEnvironmentVariable(
-            "MINITREASUREBOX_EXAM_RESTORATION_MODELS").trimmed();
+    resolved.workerExecutable.clear();
+    resolved.modelRoot.clear();
+    if (!configuredWorker.isEmpty() || !configuredModels.isEmpty()) {
+        if (!configuredWorker.isEmpty() && !configuredModels.isEmpty()) {
+            resolved.workerExecutable = configuredWorker;
+            resolved.modelRoot = configuredModels;
+        }
+    } else if (!environmentWorker.isEmpty() || !environmentModels.isEmpty()) {
+        if (!environmentWorker.isEmpty() && !environmentModels.isEmpty()) {
+            resolved.workerExecutable = environmentWorker;
+            resolved.modelRoot = environmentModels;
+        }
+    } else {
+        resolved.workerExecutable = packagedWorker;
+        resolved.modelRoot = packagedModels;
     }
-    if (resolved.modelRoot.isEmpty()) resolved.modelRoot = packagedModels;
-    resolved.modelRoot = QDir::cleanPath(resolved.modelRoot);
-    resolved.temporaryRoot = QDir::cleanPath(config.temporaryRoot.trimmed());
+    if (!resolved.modelRoot.isEmpty()) {
+        resolved.modelRoot = QDir::cleanPath(resolved.modelRoot);
+    }
+    const QString configuredTemporaryRoot = config.temporaryRoot.trimmed();
+    resolved.temporaryRoot = configuredTemporaryRoot.isEmpty()
+        ? QString() : QDir::cleanPath(configuredTemporaryRoot);
     return resolved;
+}
+
+void RestorationWorkerEngine::cleanupStaleTasks(const QString& temporaryRoot)
+{
+    const QString requestedRoot = temporaryRoot.trimmed();
+    cleanupStaleTaskDirectories(requestedRoot.isEmpty()
+        ? QDir::tempPath() : QDir::cleanPath(requestedRoot));
 }
 
 RemovalResult RestorationWorkerEngine::detectAndRemove(
@@ -310,12 +422,17 @@ RemovalResult RestorationWorkerEngine::restore(
         return failure(RemovalError::InvalidInput,
                        QStringLiteral("本地处理超时时间无效。"), request.requestId);
     }
+    QElapsedTimer deadlineTimer;
+    deadlineTimer.start();
+    cleanupStaleTaskDirectories(taskRoot(runtime));
     const QString executable = executablePath(runtime.workerExecutable);
     if (executable.isEmpty()) {
-        return baselineFallback(baseline_, request, RemovalError::RuntimeMissing, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::RuntimeMissing,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
     if (!hasModel(runtime.modelRoot)) {
-        return baselineFallback(baseline_, request, RemovalError::ModelDataMissing, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ModelDataMissing,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     report(request, ProcessingStage::Initializing, 5);
@@ -323,7 +440,7 @@ RemovalResult RestorationWorkerEngine::restore(
         executable,
         {QStringLiteral("--models"), QFileInfo(runtime.modelRoot).canonicalFilePath(),
          QStringLiteral("--self-test")},
-        runtime.timeoutMs, cancelled);
+        remainingTimeMs(deadlineTimer, runtime.timeoutMs), cancelled);
     if (selfTest.error == RemovalError::Cancelled) {
         return failure(selfTest.error, safeFailureMessage(selfTest.error), request.requestId);
     }
@@ -337,26 +454,30 @@ RemovalResult RestorationWorkerEngine::restore(
             != QStringLiteral("onnxruntime")) {
         const RemovalError reason = selfTest.error == RemovalError::None
             ? RemovalError::ProtocolError : selfTest.error;
-        return baselineFallback(baseline_, request, reason, cancelled);
+        return baselineFallback(baseline_, request, reason,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     QString pattern = runtime.temporaryRoot.isEmpty()
         ? QDir::temp().filePath(QStringLiteral("minitreasurebox-restoration-XXXXXX"))
         : QDir(runtime.temporaryRoot).filePath(QStringLiteral("minitreasurebox-restoration-XXXXXX"));
     if (!runtime.temporaryRoot.isEmpty() && !QFileInfo(runtime.temporaryRoot).isDir()) {
-        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
     QTemporaryDir taskDirectory(pattern);
     taskDirectory.setAutoRemove(true);
-    if (!taskDirectory.isValid()) {
-        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed, cancelled);
+    if (!taskDirectory.isValid() || !writeTaskMarker(taskDirectory)) {
+        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     const QString inputPath = taskDirectory.filePath(QStringLiteral("input.png"));
     const QString maskPath = taskDirectory.filePath(QStringLiteral("mask.png"));
     const QString outputPath = taskDirectory.filePath(QStringLiteral("restored.png"));
     if (!request.correctedImage.save(inputPath, "PNG")) {
-        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     report(request, ProcessingStage::Segmenting, 15);
@@ -367,29 +488,33 @@ RemovalResult RestorationWorkerEngine::restore(
          QStringLiteral("--mask"), maskPath,
          QStringLiteral("--output"), outputPath,
          QStringLiteral("--request-id"), request.requestId},
-        runtime.timeoutMs, cancelled);
+        remainingTimeMs(deadlineTimer, runtime.timeoutMs), cancelled);
     if (execution.error == RemovalError::Cancelled) {
         return failure(execution.error, safeFailureMessage(execution.error), request.requestId);
     }
     if (execution.error != RemovalError::None) {
-        return baselineFallback(baseline_, request, execution.error, cancelled);
+        return baselineFallback(baseline_, request, execution.error,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     QJsonObject response;
     if (!parseObject(execution.output, &response)
         || response.value(QStringLiteral("schema_version")).toInt() != kProtocolVersion
         || response.value(QStringLiteral("request_id")).toString() != request.requestId) {
-        return baselineFallback(baseline_, request, RemovalError::ProtocolError, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ProtocolError,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
     if (!response.value(QStringLiteral("ok")).toBool()) {
         const RemovalError reason = workerError(response.value(QStringLiteral("error")).toString());
         if (reason == RemovalError::Cancelled) {
             return failure(reason, safeFailureMessage(reason), request.requestId);
         }
-        return baselineFallback(baseline_, request, reason, cancelled);
+        return baselineFallback(baseline_, request, reason,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
     if (execution.exitCode != 0) {
-        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ProcessingFailed,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
 
     report(request, ProcessingStage::Fusing, 75);
@@ -402,7 +527,8 @@ RemovalResult RestorationWorkerEngine::restore(
     if (mask.isNull() || workerOutput.isNull()
         || mask.size() != request.correctedImage.size()
         || workerOutput.size() != request.correctedImage.size()) {
-        return baselineFallback(baseline_, request, RemovalError::ProtocolError, cancelled);
+        return baselineFallback(baseline_, request, RemovalError::ProtocolError,
+                                deadlineTimer, runtime.timeoutMs, cancelled);
     }
     mask = mask.convertToFormat(QImage::Format_Grayscale8);
     workerOutput = workerOutput.convertToFormat(QImage::Format_ARGB32);
@@ -411,6 +537,10 @@ RemovalResult RestorationWorkerEngine::restore(
         if (cancelled && cancelled()) {
             return failure(RemovalError::Cancelled,
                            safeFailureMessage(RemovalError::Cancelled), request.requestId);
+        }
+        if (remainingTimeMs(deadlineTimer, runtime.timeoutMs) <= 0) {
+            return failure(RemovalError::TimedOut,
+                           safeFailureMessage(RemovalError::TimedOut), request.requestId);
         }
         uchar* maskLine = mask.scanLine(y);
         QRgb* destination = reinterpret_cast<QRgb*>(restored.scanLine(y));
