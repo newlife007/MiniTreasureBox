@@ -2,7 +2,6 @@
 
 #include <QDesktopServices>
 #include <QDir>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QFutureWatcher>
@@ -75,8 +74,10 @@ LocalFileSearchWidget::LocalFileSearchWidget(IndexBuilder indexBuilder,
     resultList_->setObjectName(QStringLiteral("localSearchResults"));
 
     rootPath_->setReadOnly(true);
-    rootPath_->setAccessibleName(tr("本地搜索目录"));
-    rebuildButton_->setAccessibleDescription(tr("重新扫描所选目录并建立文件名索引"));
+    rootPath_->hide();
+    rebuildButton_->hide();
+    rootPath_->setAccessibleName(tr("自动索引的本地磁盘"));
+    rebuildButton_->setAccessibleDescription(tr("重新扫描全部本地固定磁盘并建立文件名索引"));
     status_->setWordWrap(true);
     status_->setAccessibleName(tr("本地文件搜索状态"));
     resultList_->setAccessibleName(tr("本地文件搜索结果"));
@@ -85,27 +86,11 @@ LocalFileSearchWidget::LocalFileSearchWidget(IndexBuilder indexBuilder,
     updateTimer_->setSingleShot(true);
     updateTimer_->setInterval(200);
 
-    auto* chooseButton = new QPushButton(tr("选择目录"), this);
-    chooseButton->setObjectName(QStringLiteral("chooseSearchRoot"));
-    chooseButton->setAccessibleDescription(tr("选择本地文件搜索的根目录"));
-
-    auto* rootLayout = new QHBoxLayout;
-    rootLayout->addWidget(rootPath_, 1);
-    rootLayout->addWidget(chooseButton);
-    rootLayout->addWidget(rebuildButton_);
     auto* layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
-    layout->addLayout(rootLayout);
     layout->addWidget(status_);
     layout->addWidget(resultList_, 1);
 
-    connect(chooseButton, &QPushButton::clicked, this, [this] {
-        const QString selected = QFileDialog::getExistingDirectory(
-            this, tr("选择搜索目录"), rootPath_->text(), QFileDialog::ShowDirsOnly);
-        if (!selected.isEmpty()) {
-            setRootDirectory(selected);
-        }
-    });
     connect(rebuildButton_, &QPushButton::clicked, this,
             &LocalFileSearchWidget::rebuildIndex);
     connect(debounceTimer_, &QTimer::timeout, this,
@@ -142,8 +127,31 @@ void LocalFileSearchWidget::setQuery(const QString& query)
     scheduleSearch();
 }
 
+void LocalFileSearchWidget::startAutomaticIndexing()
+{
+    automaticMode_ = true;
+    automaticRoots_ = LocalFileSearch::fixedDriveRoots();
+    if (automaticRoots_.isEmpty()) {
+        rootPath_->clear();
+        rebuildButton_->setEnabled(false);
+        status_->setText(tr("未找到可索引的本地固定磁盘。"));
+        return;
+    }
+
+    QStringList displayRoots;
+    displayRoots.reserve(automaticRoots_.size());
+    for (const QString& root : std::as_const(automaticRoots_)) {
+        displayRoots.append(QDir::toNativeSeparators(root));
+    }
+    rootPath_->setText(displayRoots.join(QStringLiteral("；")));
+    rebuildButton_->setEnabled(true);
+    beginIndexBuild();
+}
+
 void LocalFileSearchWidget::setRootDirectory(const QString& path)
 {
+    automaticMode_ = false;
+    automaticRoots_.clear();
     const QString normalized = QDir::cleanPath(path);
     const QFileInfo info(normalized);
     if (!QDir::isAbsolutePath(normalized) || !info.exists() || !info.isDir()
@@ -161,7 +169,9 @@ void LocalFileSearchWidget::setRootDirectory(const QString& path)
 
 void LocalFileSearchWidget::rebuildIndex()
 {
-    if (!rootPath_->text().isEmpty()) {
+    if (automaticMode_) {
+        startAutomaticIndexing();
+    } else if (!rootPath_->text().isEmpty()) {
         beginIndexBuild();
     }
 }
@@ -225,7 +235,9 @@ void LocalFileSearchWidget::beginIndexBuild()
     watchRegistrationComplete_ = false;
     results_.clear();
     resultList_->clear();
-    status_->setText(tr("正在后台建立文件名和路径索引…"));
+    status_->setText(automaticMode_
+                         ? tr("正在后台建立全部本地磁盘的文件名和路径索引…")
+                         : tr("正在后台建立文件名和路径索引…"));
     emit resultsChanged();
     emit indexStateChanged();
 
@@ -250,16 +262,40 @@ void LocalFileSearchWidget::beginIndexBuild()
                 index_ = result.index;
                 (void) configureWatcher();
 
+                if (automaticMode_) {
+                    emit indexStateChanged();
+                    scheduleSearch();
+                    return;
+                }
+
                 // Reconcile the snapshot after native watches are active. Changes
                 // received during reconciliation stay queued for the next update.
                 pendingChangedPaths_.insert(index_.rootPath);
                 applyPendingUpdates();
             });
-    watcher->setFuture(indexBuilder_(rootPath_->text(), indexCancellation_));
+    if (automaticMode_) {
+        const QStringList roots = automaticRoots_;
+        watcher->setFuture(QtConcurrent::run([roots, cancelled = indexCancellation_] {
+            return LocalFileSearch::buildIndex(roots, cancelled);
+        }));
+    } else {
+        watcher->setFuture(indexBuilder_(rootPath_->text(), indexCancellation_));
+    }
 }
 
 bool LocalFileSearchWidget::configureWatcher()
 {
+    if (automaticMode_) {
+        if (!fileWatcher_->directories().isEmpty()) {
+            fileWatcher_->removePaths(fileWatcher_->directories());
+        }
+        if (!fileWatcher_->files().isEmpty()) {
+            fileWatcher_->removePaths(fileWatcher_->files());
+        }
+        watchRegistrationComplete_ = false;
+        return false;
+    }
+
     QStringList desiredDirectories = index_.watchedDirectories;
     if (desiredDirectories.isEmpty() && !index_.rootPath.isEmpty()) {
         desiredDirectories.append(index_.rootPath);
@@ -500,6 +536,15 @@ void LocalFileSearchWidget::addResultRow(const LocalFileSearchResult& result)
 
 void LocalFileSearchWidget::showReadyStatus()
 {
+    if (automaticMode_) {
+        status_->setText(
+            tr("全盘索引已就绪：%1 个磁盘，%2 个文件，%3 个目录。输入名称或路径开始搜索。")
+                .arg(index_.rootPaths.size())
+                .arg(index_.stats.fileCount)
+                .arg(index_.stats.directoryCount)
+            + watcherWarning());
+        return;
+    }
     status_->setText(
         tr("索引已就绪：%1 个文件，%2 个目录。输入名称或路径开始搜索。")
             .arg(index_.stats.fileCount)
@@ -509,6 +554,9 @@ void LocalFileSearchWidget::showReadyStatus()
 
 QString LocalFileSearchWidget::watcherWarning() const
 {
+    if (automaticMode_) {
+        return tr(" 索引仅包含文件名和路径，不读取文件内容。重新启动应用可刷新索引。");
+    }
     return watchRegistrationComplete_
         ? QString()
         : tr(" 部分目录无法监控，变更可能不会自动显示；请使用“重建索引”手动刷新。");

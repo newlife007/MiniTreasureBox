@@ -40,6 +40,7 @@ public:
     ~LocalFileSearchWidget() override;
 
     void setQuery(const QString& query);
+    void startAutomaticIndexing();
     void setRootDirectory(const QString& path);
     void rebuildIndex();
     void setIndexBuilder(IndexBuilder indexBuilder);
@@ -86,6 +87,8 @@ private:
     quint64 searchGeneration_{0};
     bool indexUpdateInProgress_{false};
     bool watchRegistrationComplete_{false};
+    bool automaticMode_{false};
+    QStringList automaticRoots_;
     IndexBuilder indexBuilder_;
     IndexUpdater indexUpdater_;
     SearchStarter searchStarter_;

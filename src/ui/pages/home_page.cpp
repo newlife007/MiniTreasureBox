@@ -141,6 +141,11 @@ void HomePage::showRecent()
     refreshToolGrid();
 }
 
+void HomePage::startLocalFileIndexing()
+{
+    localFileSearch_->startAutomaticIndexing();
+}
+
 void HomePage::refresh()
 {
     refreshToolGrid();
@@ -189,7 +194,7 @@ void HomePage::updateSearchMode()
                                     : tr("搜索名称、分类、描述、关键词或别名"));
     search_->setAccessibleName(fileMode ? tr("本地文件搜索") : tr("全局工具搜索"));
     search_->setAccessibleDescription(
-        fileMode ? tr("输入文字以搜索所选目录中的本地文件")
+        fileMode ? tr("输入文字以搜索本机全部固定磁盘中的文件名和路径")
                  : tr("输入文字以筛选当前页面中的工具卡片"));
     localFileSearch_->setVisible(fileMode);
     resultState_->setVisible(false);

@@ -59,6 +59,7 @@ QString themeStyleSheet(Theme theme)
         QWidget#mainCentral { background: %1; }
         QWidget#sidebar { background: %2; }
         QStackedWidget#mainPages { background: %1; border: none; }
+        QListWidget#mainNavigation {
             background: %2;
             border: none;
             outline: none;
@@ -145,6 +146,65 @@ QString themeStyleSheet(Theme theme)
             padding: 8px 12px;
             font-weight: 600;
         }
+        QFrame#gameStateCard, QFrame#gameMetricCard,
+        QFrame#gameHelpCard, QFrame#gameControlBar, QFrame#gameConfigBar {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 12px;
+        }
+        QLabel#gameStateCaption, QLabel#gameMetricTitle {
+            color: %8;
+            font-size: 11px;
+        }
+        QLabel#gameStatus { color: %3; font-size: 15px; font-weight: 700; }
+        QLabel#scoreLabel, QLabel#highScoreLabel {
+            color: %3;
+            font-size: 18px;
+            font-weight: 700;
+        }
+        QLabel#gameHelpTitle { color: %3; font-size: 13px; font-weight: 700; }
+        QLabel#gameInstructions, QLabel#gameStats, QLabel#gameOptionLabel { color: %8; }
+        QLabel#gameStats { border-top: 1px solid %9; padding-top: 8px; }
+        QLabel#gameGoal { color: %7; font-weight: 600; }
+        QComboBox#guessModeSelector, QComboBox#guessRangeSelector,
+        QComboBox#game2048ModeSelector, QComboBox#snakeModeSelector,
+        QComboBox#tetrisSpeedSelector, QComboBox#gomokuModeSelector,
+        QComboBox#gomokuSideSelector {
+            background: %5;
+            border: 1px solid %9;
+            border-radius: 7px;
+            color: %3;
+            padding: 5px 9px;
+        }
+        QPushButton#startButton, QPushButton#pauseButton, QPushButton#restartButton,
+        QPushButton#guessButton, QPushButton#undoButton, QPushButton#holdButton {
+            border: 1px solid %9;
+            border-radius: 8px;
+            padding: 8px 14px;
+            color: %3;
+            background: %5;
+            font-weight: 600;
+        }
+        QPushButton#startButton, QPushButton#guessButton {
+            color: white;
+            background: %7;
+            border-color: %7;
+        }
+        QPushButton#startButton:hover, QPushButton#guessButton:hover { background: %11; }
+        QPushButton:disabled { color: %8; background: %5; }
+        QLineEdit#guessInput {
+            background: %2;
+            border: 1px solid %9;
+            border-radius: 9px;
+            color: %3;
+            padding: 8px 12px;
+            selection-background-color: %7;
+        }
+        QWidget[gameId="guess-number"] QFrame#gameStateCard { border-left: 3px solid #D89A22; }
+        QWidget[gameId="game-2048"] QFrame#gameStateCard { border-left: 3px solid #E97835; }
+        QWidget[gameId="snake"] QFrame#gameStateCard { border-left: 3px solid #2E9B63; }
+        QWidget[gameId="tetris"] QFrame#gameStateCard { border-left: 3px solid #3977D5; }
+        QWidget[gameId="gomoku"] QFrame#gameStateCard { border-left: 3px solid #A6533F; }
     )")
         .arg(background)
         .arg(surface)
@@ -280,6 +340,11 @@ MainWindow::MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& 
         restoreState(settings_.windowState());
     }
     applyTheme(settings_.theme());
+}
+
+void MainWindow::startLocalFileIndexing()
+{
+    homePage_->startLocalFileIndexing();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)

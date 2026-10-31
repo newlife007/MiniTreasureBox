@@ -33,6 +33,7 @@ struct LocalFileSearchIndexStats {
 
 struct LocalFileSearchIndex {
     QString rootPath;
+    QStringList rootPaths;
     QList<LocalFileSearchRecord> records;
     QStringList watchedDirectories;
     LocalFileSearchIndexStats stats;
@@ -50,6 +51,10 @@ class LocalFileSearch final {
 public:
     static constexpr int DefaultResultLimit = 200;
 
+    [[nodiscard]] static QStringList fixedDriveRoots();
+    [[nodiscard]] static LocalFileSearchIndexResult buildIndex(
+        const QStringList& rootPaths,
+        const std::shared_ptr<std::atomic_bool>& cancelled = {});
     [[nodiscard]] static LocalFileSearchIndexResult buildIndex(
         const QString& rootPath,
         const std::shared_ptr<std::atomic_bool>& cancelled = {});

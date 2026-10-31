@@ -9,7 +9,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Concurrent Gui Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Concurrent Gui Multimedia Widgets)
 
 add_library(minitreasurebox_foundation STATIC
     src/ai/handwriting_removal/removal_engine.cpp
@@ -39,6 +39,15 @@ add_library(minitreasurebox_foundation STATIC
     src/domain/games/game_settings.h
     src/domain/games/game_widgets.cpp
     src/domain/games/game_widgets.h
+    src/domain/games/ui/board_geometry.h
+    src/domain/games/ui/game_audio_controller.cpp
+    src/domain/games/ui/game_audio_controller.h
+    src/domain/games/ui/game_canvas.cpp
+    src/domain/games/ui/game_canvas.h
+    src/domain/games/ui/game_page_shell.cpp
+    src/domain/games/ui/game_page_shell.h
+    src/domain/games/ui/game_visual_theme.cpp
+    src/domain/games/ui/game_visual_theme.h
     src/domain/tools/builtin_tools.cpp
     src/domain/tools/builtin_tools.h
     src/domain/tools/tool_logic.cpp
@@ -53,13 +62,15 @@ add_library(minitreasurebox_foundation STATIC
     src/ui/widgets/tool_card.h
     src/ui/widgets/tool_grid.cpp
     src/ui/widgets/tool_grid.h
+    resources/game_audio.qrc
 )
 
 target_include_directories(minitreasurebox_foundation PUBLIC src)
 target_compile_definitions(minitreasurebox_foundation PRIVATE
     MINITREASUREBOX_VERSION="${PROJECT_VERSION}"
 )
-target_link_libraries(minitreasurebox_foundation PUBLIC Qt6::Core Qt6::Concurrent Qt6::Gui Qt6::Widgets)
+target_link_libraries(minitreasurebox_foundation PUBLIC
+    Qt6::Core Qt6::Concurrent Qt6::Gui Qt6::Multimedia Qt6::Widgets)
 
 add_executable(MiniTreasureBox src/main.cpp)
 target_link_libraries(MiniTreasureBox PRIVATE minitreasurebox_foundation)

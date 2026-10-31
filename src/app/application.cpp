@@ -31,6 +31,7 @@ int Application::run()
     registerBuiltinTools(*registry_);
     mainWindow_ = std::make_unique<MainWindow>(*registry_, *settings_, *history_);
     mainWindow_->show();
+    mainWindow_->startLocalFileIndexing();
     return exec();
 }
 

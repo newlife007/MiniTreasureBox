@@ -22,6 +22,7 @@ class MainWindow final : public QMainWindow {
 public:
     MainWindow(ToolRegistry& registry, Settings& settings, ToolHistory& history,
                QWidget* parent = nullptr);
+    void startLocalFileIndexing();
 
 protected:
     void closeEvent(QCloseEvent* event) override;

@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/audio">
+        <file alias="space_quest_loop.ogg">audio/space_quest_loop.ogg</file>
+    </qresource>
+</RCC>

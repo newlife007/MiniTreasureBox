@@ -57,6 +57,7 @@ jobs:
         with:
           version: '6.8.3'
           arch: win64_msvc2022_64
+          modules: qtmultimedia
           cache: false
       - name: Download and SHA-256 verify OCR packages
         shell: pwsh
@@ -306,6 +307,7 @@ jobs:
         with:
           version: '6.8.3'
           arch: clang_64
+          modules: qtmultimedia
           cache: false
       - name: Require the selected native architecture
         shell: bash

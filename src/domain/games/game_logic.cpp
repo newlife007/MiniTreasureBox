@@ -3,13 +3,16 @@
 #include <QRandomGenerator>
 
 #include <algorithm>
+#include <limits>
 #include <vector>
 
 namespace mtb::games {
 
-void GuessNumberGame::start(int target)
+void GuessNumberGame::start(int target, int minimum, int maximum)
 {
-    target_ = std::clamp(target, 1, 100);
+    minimum_ = std::min(minimum, maximum);
+    maximum_ = std::max(minimum, maximum);
+    target_ = std::clamp(target, minimum_, maximum_);
     attempts_ = 0;
     state_ = GameState::Running;
 }
@@ -23,12 +26,20 @@ void GuessNumberGame::togglePause()
     }
 }
 
+void GuessNumberGame::finish()
+{
+    if (state_ == GameState::Running || state_ == GameState::Paused)
+        state_ = GameState::GameOver;
+}
+
 GuessResult GuessNumberGame::guess(const QString& text)
 {
     bool ok = false;
     const int value = text.trimmed().toInt(&ok);
-    if (state_ != GameState::Running || !ok || value < 1 || value > 100) {
-        return {GuessResult::Outcome::Invalid, QStringLiteral("请输入 1 到 100 之间的整数。")};
+    if (state_ != GameState::Running || !ok || value < minimum_ || value > maximum_) {
+        return {GuessResult::Outcome::Invalid,
+                QStringLiteral("请输入 %1 到 %2 之间的整数。")
+                    .arg(minimum_).arg(maximum_)};
     }
     ++attempts_;
     if (value < target_) {
@@ -59,8 +70,13 @@ void Game2048::start(int firstCell, int secondCell, int firstValue, int secondVa
 
 void Game2048::setBoard(const Board& board)
 {
+    restore(board, 0);
+}
+
+void Game2048::restore(const Board& board, int score)
+{
     board_ = board;
-    score_ = 0;
+    score_ = std::max(0, score);
 }
 
 QVector<int> Game2048::emptyCells() const
@@ -181,17 +197,27 @@ void SnakeGame::start()
 {
     body_ = {QPoint(3, height_ / 2), QPoint(2, height_ / 2), QPoint(1, height_ / 2)};
     direction_ = Direction::Right;
+    committedDirection_ = Direction::Right;
     score_ = 0;
+    specialFood_ = false;
+    obstacles_.erase(std::remove_if(obstacles_.begin(), obstacles_.end(),
+                                    [this](const QPoint& point) {
+                                        return body_.contains(point);
+                                    }),
+                     obstacles_.end());
     state_ = GameState::Running;
     placeFood();
 }
 
 void SnakeGame::setDirection(Direction direction)
 {
-    const bool opposite = (direction_ == Direction::Left && direction == Direction::Right)
-        || (direction_ == Direction::Right && direction == Direction::Left)
-        || (direction_ == Direction::Up && direction == Direction::Down)
-        || (direction_ == Direction::Down && direction == Direction::Up);
+    if (direction_ != committedDirection_) {
+        return;
+    }
+    const bool opposite = (committedDirection_ == Direction::Left && direction == Direction::Right)
+        || (committedDirection_ == Direction::Right && direction == Direction::Left)
+        || (committedDirection_ == Direction::Up && direction == Direction::Down)
+        || (committedDirection_ == Direction::Down && direction == Direction::Up);
     if (!opposite) {
         direction_ = direction;
     }
@@ -209,19 +235,25 @@ bool SnakeGame::advance()
     case Direction::Left: --head.rx(); break;
     case Direction::Right: ++head.rx(); break;
     }
+    if (mode_ == SnakeMode::Wrap) {
+        head.setX((head.x() + width_) % width_);
+        head.setY((head.y() + height_) % height_);
+    }
     const bool eating = head == food_;
+    committedDirection_ = direction_;
     QVector<QPoint> collisionBody = body_;
     if (!eating) {
         collisionBody.removeLast();
     }
-    if (head.x() < 0 || head.x() >= width_ || head.y() < 0 || head.y() >= height_
-        || collisionBody.contains(head)) {
+    const bool outside = head.x() < 0 || head.x() >= width_
+        || head.y() < 0 || head.y() >= height_;
+    if (outside || collisionBody.contains(head) || obstacles_.contains(head)) {
         state_ = GameState::GameOver;
         return false;
     }
     body_.prepend(head);
     if (eating) {
-        score_ += 10;
+        score_ += specialFood_ ? 30 : 10;
         placeFood();
     } else {
         body_.removeLast();
@@ -238,20 +270,28 @@ void SnakeGame::togglePause()
     }
 }
 
-void SnakeGame::placeFood()
+void SnakeGame::spawnSpecialFood()
+{
+    placeFood(true);
+}
+
+void SnakeGame::placeFood(bool special)
 {
     QVector<QPoint> empty;
-    empty.reserve(width_ * height_ - body_.size());
+    empty.reserve(width_ * height_ - body_.size() - obstacles_.size());
     for (int y = 0; y < height_; ++y) {
         for (int x = 0; x < width_; ++x) {
             const QPoint candidate(x, y);
-            if (!body_.contains(candidate)) {
+            if (!body_.contains(candidate) && !obstacles_.contains(candidate)) {
                 empty.append(candidate);
             }
         }
     }
     if (!empty.isEmpty()) {
         food_ = empty.at(QRandomGenerator::global()->bounded(empty.size()));
+        specialFood_ = special;
+    } else {
+        state_ = GameState::Won;
     }
 }
 
@@ -298,36 +338,47 @@ void TetrisGame::reset()
     board_ = {};
     score_ = 0;
     lines_ = 0;
-    bagIndex_ = static_cast<int>(bag_.size());
+    combo_ = -1;
+    queue_.clear();
+    heldPiece_.reset();
+    holdUsed_ = false;
     origin_ = QPoint(4, 1);
     rotation_ = 0;
 }
 
-void TetrisGame::refillBag()
+void TetrisGame::refillQueue()
 {
-    bag_ = {Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z};
-    for (int index = static_cast<int>(bag_.size()) - 1; index > 0; --index) {
+    std::array<Piece, 7> bag{Piece::I, Piece::O, Piece::T, Piece::L,
+                             Piece::J, Piece::S, Piece::Z};
+    for (int index = static_cast<int>(bag.size()) - 1; index > 0; --index) {
         const int other = QRandomGenerator::global()->bounded(index + 1);
-        std::swap(bag_[static_cast<std::size_t>(index)],
-                  bag_[static_cast<std::size_t>(other)]);
+        std::swap(bag[static_cast<std::size_t>(index)],
+                  bag[static_cast<std::size_t>(other)]);
     }
-    bagIndex_ = 0;
+    for (Piece piece : bag) queue_.push_back(piece);
+}
+
+TetrisGame::Piece TetrisGame::takeNext()
+{
+    if (queue_.size() < 4) refillQueue();
+    const Piece next = queue_.front();
+    queue_.pop_front();
+    if (queue_.size() < 4) refillQueue();
+    return next;
 }
 
 void TetrisGame::start()
 {
     reset();
-    refillBag();
-    piece_ = bag_[static_cast<std::size_t>(bagIndex_++)];
+    refillQueue();
+    piece_ = takeNext();
     state_ = fits(piece_, rotation_, origin_) ? GameState::Running : GameState::GameOver;
 }
 
 void TetrisGame::start(Piece piece)
 {
     reset();
-    bag_ = {Piece::I, Piece::O, Piece::T, Piece::L, Piece::J, Piece::S, Piece::Z};
-    const auto position = std::find(bag_.begin(), bag_.end(), piece);
-    bagIndex_ = static_cast<int>(std::distance(bag_.begin(), position)) + 1;
+    refillQueue();
     piece_ = piece;
     state_ = fits(piece_, rotation_, origin_) ? GameState::Running : GameState::GameOver;
 }
@@ -388,6 +439,24 @@ int TetrisGame::hardDrop()
     return distance;
 }
 
+bool TetrisGame::hold()
+{
+    if (state_ != GameState::Running || holdUsed_) return false;
+    const Piece outgoing = piece_;
+    if (heldPiece_) {
+        piece_ = *heldPiece_;
+        heldPiece_ = outgoing;
+    } else {
+        heldPiece_ = outgoing;
+        piece_ = takeNext();
+    }
+    origin_ = QPoint(4, 1);
+    rotation_ = 0;
+    holdUsed_ = true;
+    if (!fits(piece_, rotation_, origin_)) state_ = GameState::GameOver;
+    return true;
+}
+
 int TetrisGame::lockAndClear()
 {
     for (const QPoint& point : currentCells()) {
@@ -395,7 +464,7 @@ int TetrisGame::lockAndClear()
             state_ = GameState::GameOver;
             return 0;
         }
-        board_[point.y()][point.x()] = 1;
+        board_[point.y()][point.x()] = static_cast<int>(piece_) + 1;
     }
     int cleared = 0;
     for (int row = Height - 1; row >= 0;) {
@@ -414,6 +483,12 @@ int TetrisGame::lockAndClear()
     lines_ += cleared;
     static constexpr int rewards[] = {0, 100, 300, 500, 800};
     score_ += rewards[std::min(cleared, 4)];
+    if (cleared > 0) {
+        ++combo_;
+        if (combo_ > 0) score_ += combo_ * 50;
+    } else {
+        combo_ = -1;
+    }
     return cleared;
 }
 
@@ -422,10 +497,8 @@ void TetrisGame::spawnNext()
     if (state_ == GameState::GameOver) {
         return;
     }
-    if (bagIndex_ >= static_cast<int>(bag_.size())) {
-        refillBag();
-    }
-    piece_ = bag_[static_cast<std::size_t>(bagIndex_++)];
+    piece_ = takeNext();
+    holdUsed_ = false;
     origin_ = QPoint(4, 1);
     rotation_ = 0;
     if (!fits(piece_, rotation_, origin_)) {
@@ -442,6 +515,27 @@ void TetrisGame::togglePause()
     }
 }
 
+QVector<TetrisGame::Piece> TetrisGame::previewPieces(int count) const
+{
+    QVector<Piece> preview;
+    const int bounded = std::max(0, std::min(count, static_cast<int>(queue_.size())));
+    preview.reserve(bounded);
+    auto iterator = queue_.cbegin();
+    for (int index = 0; index < bounded; ++index, ++iterator) {
+        preview.append(*iterator);
+    }
+    return preview;
+}
+
+QVector<QPoint> TetrisGame::ghostCells() const
+{
+    QPoint ghostOrigin = origin_;
+    while (fits(piece_, rotation_, ghostOrigin + QPoint(0, 1))) {
+        ++ghostOrigin.ry();
+    }
+    return cells(piece_, rotation_, ghostOrigin);
+}
+
 QVector<QPoint> TetrisGame::currentCells() const
 {
     return cells(piece_, rotation_, origin_);
@@ -453,6 +547,8 @@ void GomokuGame::start()
     currentPlayer_ = 1;
     winner_ = 0;
     moves_ = 0;
+    lastMove_ = {-1, -1};
+    history_.clear();
     state_ = GameState::Running;
 }
 
@@ -471,6 +567,8 @@ bool GomokuGame::place(int x, int y)
         return false;
     }
     board_[y][x] = currentPlayer_;
+    lastMove_ = {x, y};
+    history_.append(lastMove_);
     ++moves_;
     if (hasFive(x, y)) {
         winner_ = currentPlayer_;
@@ -481,6 +579,52 @@ bool GomokuGame::place(int x, int y)
         currentPlayer_ = 3 - currentPlayer_;
     }
     return true;
+}
+
+bool GomokuGame::undo(int moveCount)
+{
+    if (history_.isEmpty() || moveCount <= 0) return false;
+    const int removeCount = std::min(moveCount, static_cast<int>(history_.size()));
+    for (int index = 0; index < removeCount; ++index) history_.removeLast();
+
+    const QVector<QPoint> retained = history_;
+    board_ = {};
+    currentPlayer_ = 1;
+    winner_ = 0;
+    moves_ = 0;
+    lastMove_ = {-1, -1};
+    history_.clear();
+    state_ = GameState::Running;
+    for (const QPoint& move : retained) {
+        board_[move.y()][move.x()] = currentPlayer_;
+        lastMove_ = move;
+        history_.append(move);
+        ++moves_;
+        currentPlayer_ = 3 - currentPlayer_;
+    }
+    return true;
+}
+
+QVector<QPoint> GomokuGame::winningLine() const
+{
+    if (state_ != GameState::Won || winner_ == 0 || lastMove_.x() < 0) {
+        return {};
+    }
+    for (const QPoint direction : {QPoint(1, 0), QPoint(0, 1),
+                                   QPoint(1, 1), QPoint(1, -1)}) {
+        QVector<QPoint> line{lastMove_};
+        for (int sign : {-1, 1}) {
+            QPoint point = lastMove_;
+            while (true) {
+                point += direction * sign;
+                if (at(point.x(), point.y()) != winner_) break;
+                if (sign < 0) line.prepend(point);
+                else line.append(point);
+            }
+        }
+        if (line.size() >= 5) return line;
+    }
+    return {};
 }
 
 bool GomokuGame::hasFive(int x, int y) const
@@ -503,6 +647,108 @@ bool GomokuGame::hasFive(int x, int y) const
         }
     }
     return false;
+}
+
+namespace {
+
+int gomokuAt(const GomokuGame::Board& board, int x, int y)
+{
+    if (x < 0 || x >= GomokuGame::Size || y < 0 || y >= GomokuGame::Size) return 0;
+    return board[y][x];
+}
+
+int lineLength(const GomokuGame::Board& board, const QPoint& move,
+               int player, const QPoint& direction)
+{
+    int length = 1;
+    for (int sign : {-1, 1}) {
+        QPoint point = move;
+        while (true) {
+            point += direction * sign;
+            if (gomokuAt(board, point.x(), point.y()) != player) break;
+            ++length;
+        }
+    }
+    return length;
+}
+
+int movePotential(GomokuGame::Board board, const QPoint& move, int player)
+{
+    board[move.y()][move.x()] = player;
+    int best = 1;
+    int openEnds = 0;
+    for (const QPoint direction : {QPoint(1, 0), QPoint(0, 1),
+                                   QPoint(1, 1), QPoint(1, -1)}) {
+        best = std::max(best, lineLength(board, move, player, direction));
+        for (int sign : {-1, 1}) {
+            QPoint point = move + direction * sign;
+            while (gomokuAt(board, point.x(), point.y()) == player)
+                point += direction * sign;
+            if (gomokuAt(board, point.x(), point.y()) == 0) ++openEnds;
+        }
+    }
+    return best * best * 20 + openEnds * 3;
+}
+
+QVector<QPoint> gomokuCandidates(const GomokuGame::Board& board)
+{
+    QVector<QPoint> candidates;
+    bool hasStone = false;
+    for (int y = 0; y < GomokuGame::Size; ++y) {
+        for (int x = 0; x < GomokuGame::Size; ++x) {
+            if (!board[y][x]) continue;
+            hasStone = true;
+            for (int dy = -2; dy <= 2; ++dy) {
+                for (int dx = -2; dx <= 2; ++dx) {
+                    const QPoint point(x + dx, y + dy);
+                    if (point.x() >= 0 && point.x() < GomokuGame::Size
+                        && point.y() >= 0 && point.y() < GomokuGame::Size
+                        && board[point.y()][point.x()] == 0
+                        && !candidates.contains(point)) {
+                        candidates.append(point);
+                    }
+                }
+            }
+        }
+    }
+    if (!hasStone) candidates.append({GomokuGame::Size / 2, GomokuGame::Size / 2});
+    return candidates;
+}
+
+}  // namespace
+
+QPoint chooseGomokuMove(const GomokuGame::Board& board, int player,
+                        GomokuAiLevel level)
+{
+    const QVector<QPoint> candidates = gomokuCandidates(board);
+    if (candidates.isEmpty()) return {-1, -1};
+    const int opponent = 3 - player;
+
+    for (const QPoint& move : candidates) {
+        if (movePotential(board, move, player) >= 500) return move;
+    }
+    for (const QPoint& move : candidates) {
+        if (movePotential(board, move, opponent) >= 500) return move;
+    }
+    if (level == GomokuAiLevel::Easy) {
+        return candidates.at(QRandomGenerator::global()->bounded(candidates.size()));
+    }
+
+    QPoint best = candidates.first();
+    int bestScore = std::numeric_limits<int>::min();
+    const QPoint center(GomokuGame::Size / 2, GomokuGame::Size / 2);
+    for (const QPoint& move : candidates) {
+        const int attack = movePotential(board, move, player);
+        const int defense = movePotential(board, move, opponent);
+        const int centerDistance = std::abs(move.x() - center.x())
+            + std::abs(move.y() - center.y());
+        const int score = attack * 2 + defense - centerDistance;
+        if (score > bestScore) {
+            bestScore = score;
+            best = move;
+        }
+    }
+    return best;
 }
 
 }  // namespace mtb::games

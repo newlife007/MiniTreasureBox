@@ -6,7 +6,7 @@
 
 - CMake 3.22 或更高版本
 - 支持 C++20 的编译器
-- Qt 6 的 Core、Gui、Widgets 和 Test 组件
+- Qt 6 的 Core、Concurrent、Gui、Widgets、Multimedia 和 Test 组件
 - Python 3.10 或更高版本，用于发布打包脚本和对应的回归测试
 
 ## 配置、构建与测试

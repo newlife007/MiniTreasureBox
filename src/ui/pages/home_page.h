@@ -29,6 +29,7 @@ public:
     void showCategories(const QString& heading, const QStringList& categories);
     void showFavorites();
     void showRecent();
+    void startLocalFileIndexing();
     void refresh();
     void focusSearch();
     void clearSearch();

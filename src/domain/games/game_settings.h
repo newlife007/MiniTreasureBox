@@ -15,6 +15,15 @@ public:
     int incrementWinCount(const QString& gameId);
     [[nodiscard]] bool soundEnabled() const;
     void setSoundEnabled(bool enabled);
+    [[nodiscard]] bool musicEnabled() const;
+    void setMusicEnabled(bool enabled);
+    void recordGameStarted(const QString& gameId, const QString& mode);
+    void recordGameFinished(const QString& gameId, const QString& mode,
+                            bool won, int score);
+    [[nodiscard]] int gamesPlayed(const QString& gameId, const QString& mode) const;
+    [[nodiscard]] int gamesWon(const QString& gameId, const QString& mode) const;
+    [[nodiscard]] int longestStreak(const QString& gameId, const QString& mode) const;
+    [[nodiscard]] int modeBestScore(const QString& gameId, const QString& mode) const;
 private:
     QSettings* storage_;
 };
