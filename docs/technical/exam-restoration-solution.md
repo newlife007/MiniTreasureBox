@@ -7,7 +7,9 @@
 
 ## 1. 结论
 
-建议先做固定范围的模型选型 Spike，再决定是否集成开源权重或启动自训练。产品路径沿用现有 Qt Widget、`IHandwritingRemovalEngine`、后台任务和离线 Worker 架构，不把 Python 或模型下载暴露给用户。
+按维护者意见，本版以 [AndSonder/HandWritingEraser-Pytorch 固定提交 `b216bff33f2db184a0ba3c782fe70086bb3c754a`](https://github.com/AndSonder/HandWritingEraser-Pytorch/tree/b216bff33f2db184a0ba3c782fe70086bb3c754a) 为首要技术参考。基线方向采用其“背景 / 手写 / 印刷”三分类分割思路和全分辨率分块推理思路，再通过固定预处理、确定性重叠融合和保守的文档后处理适配产品。该仓库及其外链 checkpoint **不是可直接投入生产的依赖**：必须先完成 H0 至 H4 Spike，独立验证复现、质量、权利、ONNX、CPU 性能与打包条件，才能决定采用、重训或放弃。
+
+产品路径沿用现有 Qt Widget、`IHandwritingRemovalEngine`、后台任务和离线 Worker 架构，不把 Python 或模型下载暴露给用户。方向和几何校正、确定性修复仍是完整流程的必要组件；其他开源模型只作为补充候选，不改变 HandWritingEraser-first 的决策顺序。
 
 目标流程是：用户导入或拖入一张受支持的试卷照片后，预处理和还原立即自动开始；界面显示阶段进度和取消入口；任务完成后自动打开结果视图。用户无需再点击“自动 Mask”，也无需编辑 Mask。现有 Inspector、Mask 画笔、橡皮擦、矩形、撤销和重做继续保留，但只作为可选的高级修正入口。
 
@@ -68,14 +70,34 @@
 | [adbu42/WPI_inpainting](https://github.com/adbu42/WPI_inpainting) | 访问时未见仓库许可证；研究代码 | 组合独立分割与 LBAM 修复权重，接近两阶段任务，但工程和导出成本高 | 无仓库许可证，默认无复制、修改和再分发授权 | 分割和 LBAM 权重来自不同来源，仓库未给出统一的再分发授权 | 相关训练数据权利未形成可发布闭环 | 源、权重和数据门禁都不通过，不使用、不打包 |
 | [SCUT-DLVCLab/SCUT-EnsExam](https://github.com/SCUT-DLVCLab/SCUT-EnsExam/tree/94de3ab7a1c01c63b8c70ec8070be9e7bd1b866b) | 文档修订 `94de3ab7a1c01c63b8c70ec8070be9e7bd1b866b`；545 对配对试卷，430 训练、115 测试，约 1.14 GB，需申请访问 | 与任务高度相关，可在获准环境做研究对照 | 仓库未提供可供产品集成的源代码许可证，本方案也不集成其代码 | 不提供本项目可发布的预训练权重 | CC BY-NC-ND 4.0，并注明非商业研究用途；访问还需申请 | 仅限按批准条件做研究评测；不得随应用再分发，也不得在未取得书面许可前用它训练或派生发布权重 |
 
-### 4.2 官方指标只能作为背景
+### 4.2 HandWritingEraser 固定版本分析
+
+以下结论来自固定提交 `b216bff33f2db184a0ba3c782fe70086bb3c754a` 的源码、[README](https://github.com/AndSonder/HandWritingEraser-Pytorch/blob/b216bff33f2db184a0ba3c782fe70086bb3c754a/README.md) 和 [MIT LICENSE](https://github.com/AndSonder/HandWritingEraser-Pytorch/blob/b216bff33f2db184a0ba3c782fe70086bb3c754a/LICENSE)，不把仓库 README 的自报结果视为独立复测：
+
+- **任务和环境**：README 指定 Python 3.7、PyTorch 1.7+。`datasets/handwriting.py` 将标签定义为 `background=0`、`hand=1`、`print=2`，即背景、手写和印刷三分类。模型采用 [DeepLabV3+](https://arxiv.org/abs/1802.02611)，实现源自同为 MIT 的 [VainF/DeepLabV3Plus-Pytorch](https://github.com/VainF/DeepLabV3Plus-Pytorch)。训练可选 focal loss 处理类别不平衡，并通过重叠裁剪增加样本。
+- **仓库报告指标**：README 汇总报告 Overall Acc `0.990526`、Mean Acc `0.920829`、FreqW Acc `0.982231`、Mean IoU `0.867805`。README 没有给出按手写和印刷类别拆分的召回率、误删率、评测硬件、重复实验或独立评测结果，因此这些汇总值不满足第 6 节产品门禁，也不能证明真实试卷上的擦除质量。
+- **推理实际语义**：`predict_one.py` 把长边方向按 1024 像素块进行重叠分块预测，对手写 Mask 和印刷 Mask 做形态学扩展，并叠加红色阈值处理批改色。结果保留预测为印刷的像素，把其他像素置白。它没有修复纸张纹理，也没有重建被不透明手写完全遮住的印刷内容，不能称为图像修复或原始信息恢复。
+- **切块与并发缺口**：脚本使用固定文件名 `tmp_img.png` 传递切块，多任务会发生冲突；重叠块按写入顺序覆盖，没有概率加权、边缘窗或确定性融合，接缝与顺序敏感性没有测试。
+- **模型和预处理不一致**：README 的测试命令使用 ResNet-50 checkpoint 名，`main.py` 默认 `deeplabv3plus_resnet101`，`predict_one.py` 又硬编码 ResNet-101。训练路径以均值和标准差 `0.5` 归一化；预测脚本虽然声明了变换，却没有把该归一化变换应用到送入模型的切块。外链 checkpoint 的真实骨干和预处理契约必须实测确认，不能靠文件名推断。
+- **复现和验证缺口**：仓库没有 tag 或 release，固定源码的最后提交日期为 2022-06-26；没有自动化测试、ONNX 导出或部署说明。`requirements.txt` 未固定版本，且 `predict_one.py` 使用的 `cv2` 没有列入依赖。`datasets/handwriting.py` 对排序后的文件做 85% / 15% 划分，但没有模板或试卷来源分组，不能证明训练集与验证集在模板级隔离。
+- **外部反馈边界**：[GitHub issues](https://github.com/AndSonder/HandWritingEraser-Pytorch/issues) 中有数据目录不清楚和手写类别效果较弱等用户报告。这些报告只用于提示 Spike 覆盖相应风险，没有统一数据、版本和指标，属于轶事性证据，不能作为 benchmark 或否定模型的依据。
+
+#### 4.2.1 源码、权重和数据权利必须分开
+
+1. **源码**：固定提交内的代码由仓库 [MIT LICENSE](https://github.com/AndSonder/HandWritingEraser-Pytorch/blob/b216bff33f2db184a0ba3c782fe70086bb3c754a/LICENSE) 覆盖，可在遵守许可证通知的前提下研究和改造。
+2. **checkpoint**：README 只提供[外部百度网盘 checkpoint 页面](https://pan.baidu.com/s/1QmCGhwpKNtdKtYoGU0YK3w?pwd=a2jh)。仓库没有为该二进制给出可独立核验的来源、架构清单、文件哈希、权重许可证或再分发授权。页面可访问性和页面内容可能受地区、登录及后续变更影响，本方案未独立确认其条款。
+3. **数据集**：README 链接 [Baidu AI Studio 数据页](https://aistudio.baidu.com/aistudio/datasetdetail/121039) 和[外部百度网盘数据页面](https://pan.baidu.com/s/1l2mQ3FLx_NAPJEh30cOeZA?pwd=05bl)。源码的 MIT 许可证不覆盖这些外部数据，也不自动授予训练、派生权重或再分发权。本方案未从外部页面独立确认完整来源和授权链。
+
+因此，外链 checkpoint 在完成来源、实际架构、SHA-256、许可证和再分发权核验前，不得随 MiniTreasureBox 打包、镜像、上传到本项目控制的存储，也不得成为发布构建依赖。数据集必须单独通过用途、隐私、训练和派生权重发布审查。H0 即使获准下载，也仅限隔离研究环境，不构成任何发布批准。
+
+### 4.3 其他官方指标只能作为背景
 
 Paddle 文档报告 [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/main/en/version3.x/module_usage/doc_img_orientation_classification.html) Top-1 为 99.06%、模型约 7 MB；[UVDoc](https://www.paddleocr.ai/main/en/version3.x/module_usage/text_image_unwarping.html) CER 为 0.179、模型约 30.3 MB。这些数字来自 Paddle 的数据、硬件和评测环境，不是 MiniTreasureBox 在真实试卷照片上的实测结果，也不能替代本方案的门禁。
 
-### 4.3 选型建议
+### 4.4 选型建议
 
-- 方向和几何校正优先验证 Paddle 官方小模型，因为来源、版本和许可证最清楚。
-- 手写分割先把 HandWritingEraser 当作结构参考和质量上界实验。其外链权重未通过再分发门禁，因此不能直接成为发布依赖。
+- 手写分割先执行第 6 节 HandWritingEraser-first Spike。只继承三分类任务定义和全分辨率重叠切块方向；仓库脚本、外链 checkpoint、切块临时文件、覆盖式拼接和白底输出都不能原样进入产品。
+- 方向和几何校正可并行验证 Paddle 官方小模型，因为来源、版本和许可证相对清楚，但它们是分割前处理，不替代 H0 至 H4 对 HandWritingEraser 路线的决策。
 - 修复同时比较确定性文档修复和 big-lama。表格、横线和印刷笔画应优先使用可解释的线条重建与空白原卷复制，不让通用生成模型任意改写页面。
 - IOPaint 只作工程参考；Hand-Text-Erasure、WPI_inpainting 和 SCUT-EnsExam 不进入发布依赖。
 
@@ -122,11 +144,21 @@ Paddle 文档报告 [PP-LCNet_x1_0_doc_ori](https://www.paddleocr.ai/main/en/ver
 - 模型和结果文件分别校验 SHA-256、尺寸、解码结果和像素预算。导出继续使用临时文件加原子替换，只允许 PNG，不覆盖未经确认的已有文件。
 - 模型不可用、崩溃、超时或内存不足时，自动回退现有基线 Mask，并清楚标为“基础模式”；Inspector 仍可完成手工修正。
 
-## 6. 集成前模型选型 Spike
+## 6. HandWritingEraser-first 分阶段 Spike
 
-Spike 是实现前的固定 go / no-go 门禁，不修改正式应用或发布流程。所有候选必须在同一评测集、同一预处理和同一硬件档位运行，保存原始指标和失败样例。表中数值是**待维护者批准的初始目标，不是已测性能**。
+Spike 是实现前的固定 go / no-go 门禁，不修改正式应用或发布流程。主线从固定提交 `b216bff33f2db184a0ba3c782fe70086bb3c754a` 开始，而不是同时对所有候选做宽泛比较。各阶段必须保存环境、输入清单、命令、原始指标、失败样例和结论；上一阶段产物未冻结，不进入下一阶段。第 6.3 节数值是**待维护者批准的初始目标，不是仓库 README 指标，也不是 MiniTreasureBox 已测性能**。
 
-### 6.1 合法评测集与场景
+### 6.1 H0 至 H4 阶段与产出
+
+| 阶段 | 操作范围 | 必须产出与退出条件 |
+| --- | --- | --- |
+| **H0：隔离复现** | 仅在获授权、禁止发布制品流出的隔离研究环境中，检出固定提交，记录 Python、PyTorch、CUDA / CPU 和全部依赖，并在项目法律 / 数据负责人确认下载与研究用途有合法依据后取得外链 checkpoint。不得把权利不明的数据或权重复制到产品仓库、CI、发布缓存或项目镜像。 | 产出可重放命令、依赖锁定草案、checkpoint 文件名 / 字节数 / SHA-256、实际骨干识别结果、输入归一化实验和代表样例结果。无法合法取得制品、无法确认 checkpoint 与 ResNet-50 / 101 架构匹配，或固定源码仍不可复现，则记录原因并直接进入 H4 的“重训 / no-go”判断。 |
+| **H1：冻结推理契约** | 以源码行为为起点，明确三类标签映射、颜色空间、缩放和均值 / 标准差；固定 checkpoint 架构；固定 1024 像素基准瓦片、实际重叠宽度、边缘窗、概率融合、argmax 和形态学参数。用内存或 task ID 隔离文件替代共享 `tmp_img.png`，禁止按顺序覆盖重叠块。 | 产出版本化推理规范、边界尺寸 / 相邻瓦片 / 顺序置换夹具和确定性结果哈希。同一输入不同遍历顺序必须产生相同概率融合与 Mask；训练、原脚本和冻结预处理差异必须形成可审计对照。未消除接缝、并发冲突或预处理歧义则不进入 H2。 |
+| **H2：合法数据质量评测** | 在第 6.2 节模板隔离且权利明确的数据上，至少测三类混淆矩阵、手写类 recall、印刷类被判为手写的 false deletion，并完成手写残留、线表保护、OCR 一致性、Mask 外不变性和全页盲审。README 四项汇总指标只能列作背景。 | 产出总体和按笔色、模板、语言、拍摄条件分层的报告、95% 置信区间及失败样例集。第 6.3 节任一质量、隐私或 Mask 外不变性门禁失败，就不得以 README `0.990526` 等汇总值覆盖失败。 |
+| **H3：ONNX 与桌面预算** | 对 H2 冻结模型导出 ONNX，锁定 opset、动态尺寸和算子；比较框架与 ONNX 输出；在 Windows 11 x64、macOS 13 Intel、macOS 13 Apple M1 的纯 CPU 档位测冷启动、连续 30 次任务、取消、峰值 RSS、可靠性和压缩包增量。 | 产出 ONNX 文件哈希、逐样本一致性、三平台延迟 / 内存 / 取消 / 可靠性报告、依赖和许可证清单、包体估算。ONNX、性能、可靠性、隐私、许可证或包体任一门禁失败则不能 go。 |
+| **H4：决策** | 汇总 H0 至 H3 的证据，并再次独立审查源码、checkpoint、数据和派生制品的权利。 | 仅有三种书面结论：**go** 表示全部门禁通过且 checkpoint 获明确发布再分发权，可进入批准后的实现；**retrain** 表示任务定义有效但外链权利或模型门禁失败，按第 7 节使用合法数据独立训练；**no-go** 表示三分类路线达不到质量 / CPU 预算，或无法建立合法、可复现的训练评测闭环。不得以“有开源仓库”代替结论证据。 |
+
+### 6.2 合法评测集与场景
 
 建立至少 300 对内部评测页，空白页与人工标注后的照片成对。数据由贡献者原创或取得明确的评测、训练和内部共享授权，保留来源、授权范围、同意记录、采集日期和撤回流程。按试卷模板分组为互斥的 60% 调参、20% 验证、20% 最终测试，避免同一模板泄漏。最终测试集在门禁冻结后不得调参。
 
@@ -134,11 +166,14 @@ Spike 是实现前的固定 go / no-go 门禁，不修改正式应用或发布�
 
 SCUT-EnsExam 只能在单独、获批的研究环境中作为外部参考，不能复制到本评测集，也不能据此训练或产出发布权重，除非权利人另行书面许可。
 
-### 6.2 固定门禁
+### 6.3 固定门禁
+
+下列原有质量、性能、隐私、可靠性、包体和 ONNX 门禁全部保留；H0 复现成功或 README 汇总指标较高都不能豁免任何一项。
 
 | 维度 | 测量方法 | 初始 go 条件 |
 | --- | --- | --- |
 | 法律与来源 | 逐项审查代码、每个权重、训练数据、许可证、NOTICE、固定 URL 和 SHA-256 | 100% 制品可追溯且明确允许目标发布方式；任一项不明即 no-go |
+| 手写类召回 | 对冻结三分类 Mask 与像素级真值计算 hand 类 recall，并按笔色、笔画和场景分层 | 最终测试集总体不低于 0.95，每个预定义场景分层不低于 0.90 |
 | 手写残留 | 在真实手写标注区计算还原后仍可见墨迹像素占原墨迹像素比例，并人工复核 | 最终测试集均值不高于 5%，P95 不高于 12% |
 | 印刷内容误删 | 在空白原卷可见印刷区域计算被错误改变的前景像素比例 | 均值不高于 0.5%，任何页面不高于 2% |
 | 线条 / 表格保护 | 对空白原卷和结果的长线段做匹配 F1 | 总体 F1 不低于 0.98，每个场景分层不低于 0.95 |
@@ -154,9 +189,9 @@ SCUT-EnsExam 只能在单独、获批的研究环境中作为外部参考，不�
 
 目标平台至少包括 Windows 11 x64（4 核 CPU、8 GiB RAM）、macOS 13 Intel（4 核 CPU、8 GiB RAM）和 macOS 13 Apple M1（8 GiB 统一内存），全程只用 CPU。Linux 作为开发验证平台记录但不阻塞当前发布矩阵。若某候选超过门禁，不通过降低图片质量、隐藏失败或联网计算绕过，应更换模型或进入训练提案。
 
-## 7. 开源权重失败后的训练预案
+## 7. H4 选择 retrain 后的独立训练预案
 
-只有维护者批准方案且直接开源权重因质量、许可或打包任一门禁失败后，才新增以下工作区。本次提交不创建它：
+只有 H4 选择 **retrain**，即维护者已批准方案，且直接开源权重因质量、许可或打包任一门禁失败后，才新增以下工作区。本次提交不创建它。训练预案只继承 H0 至 H2 验证有效的 HandWritingEraser **三分类任务定义**和**全分辨率重叠切块方向**；不复制其权利未核验的数据、checkpoint、临时文件推理方式或未经验证的实现细节。模型结构、数据管线、融合、评测和导出在本项目中独立、可复现地实现：
 
 ```text
 ml/exam_restoration/
@@ -191,9 +226,9 @@ ml/exam_restoration/
     └── exam-restoration.md
 ```
 
-原图、标注图、数据缓存、checkpoint、ONNX 和评测产物全部通过 `.gitignore` 排除，不进入 Git。仓库只保留 schema、去身份化清单模板、脚本、配置、测试和模型卡。每条数据记录来源、所有者、采集同意、允许用途、保留期限、撤回状态和哈希。未成年人试卷、姓名、学号、二维码等个人信息必须先取得合法同意并去身份化。来源或授权不完整的数据不能训练、验证或发布。
+原图、标注图、数据缓存、checkpoint、ONNX 和评测产物全部通过 `.gitignore` 排除，不进入 Git。仓库只保留 schema、去身份化清单模板、脚本、配置、测试和模型卡。每条数据记录来源、所有者、采集同意、允许用途、保留期限、撤回状态、内容哈希和来源证明；构建确定性 manifest，按稳定 ID 排序并固定随机种子、工具版本和划分哈希。未成年人试卷、姓名、学号、二维码等个人信息必须先取得合法同意并去身份化。来源或授权不完整的数据不能训练、验证或发布。
 
-训练数据由有权使用的空白 / 标注配对页和合成覆盖组成。合成器只使用许可明确的字体、纸面和笔迹资产，随机生成笔色、粗细、透明度、压力、勾叉、公式、涂改、拍摄几何和光照。真实测试集不混入训练。数据版本和划分按模板冻结并写入模型卡。
+训练数据由有权使用的空白 / 标注配对页和许可明确的合成覆盖组成。合成器只使用许可明确的字体、纸面和笔迹资产，随机生成笔色、粗细、透明度、压力、勾叉、公式、涂改、拍摄几何和光照。训练、验证和最终测试严格按试卷模板或同源版式分组，真实测试集不混入训练；数据版本、模板组、确定性划分和清单哈希写入模型卡。
 
 分割模型输出印刷、手写 / 批改、背景三类概率及不确定度；损失初案为类别加权交叉熵 + Dice / Focal，并对印刷误删和线条交叉施加更高代价。修复模型仅接收接受 Mask，并组合 Mask 内重建、感知、边界一致性和线条保持损失；Mask 外使用硬拷贝，不依赖损失近似保证。若确定性文档修复已过门禁，不训练生成修复模型。
 
@@ -270,4 +305,6 @@ Windows、macOS Intel 和 Apple Silicon 原生构建 Worker，校验固定 SHA-2
 
 ## 10. 本次验证说明
 
-本次是纯文档变更。已检查变更范围和 Markdown 内容，并运行 `git diff --check`。文档所列 CMake 配置、构建和完整 CTest 没有被宣称通过：前置基线 FEAT-001 已确认本沙箱不存在 `/projects/sandbox/Qt/6.8.3/gcc_64`、`/projects/sandbox/.qt-sysroot/usr` 或系统 Qt 6，CMake 无法找到 `Qt6Config.cmake`，因此本次无法执行构建和 CTest。
+本次是纯文档变更。文档结构检查发现 23 个 Markdown 链接和 28 个唯一标题，所需固定提交、MIT 许可证、DeepLabV3+ 论文、VainF 上游实现以及 checkpoint / 数据集外部页面均已引用；上述关键外链在验证时返回 HTTP 200。`python3 -m unittest tests.unit.test_build_paddleocr_runtime` 运行 4 项测试并通过，`git diff --check` 通过，变更范围检查只列出 `docs/technical/exam-restoration-solution.md`。
+
+按要求执行了 CMake 配置命令，但沙箱不存在 `/projects/sandbox/Qt/6.8.3/gcc_64`、`/projects/sandbox/.qt-sysroot/usr` 或系统 Qt 6，CMake 在 `CMakeLists.txt:12` 无法找到 `Qt6Config.cmake` / `qt6-config.cmake` 并退出。配置未完成，因此 C++ build 和 CTest 均不可用、没有被执行，也没有被宣称通过。没有 Dockerfile 可供镜像验证。
