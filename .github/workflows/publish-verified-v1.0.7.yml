@@ -78,24 +78,30 @@ jobs:
 
           gh api "repos/${repository}/actions/runs/${source_run}/jobs?per_page=100" \
             > provenance/jobs.json
-          jq -e '
-            def one_success($name):
-              [.jobs[] | select(.name == $name and .status == "completed" and .conclusion == "success")]
-              | length == 1;
+          # This is the hosted-runner evidence required by the runner-fix review.
+          # Bind every job record to the corrected run and commit before accepting it.
+          jq -e --argjson source_run "$source_run" --arg build_commit "$build_commit" '
+            def exact_job($name; $conclusion):
+              [.jobs[] |
+                select(
+                  .run_id == $source_run and
+                  .head_sha == $build_commit and
+                  .name == $name and
+                  .status == "completed" and
+                  .conclusion == $conclusion
+                )
+              ] | length == 1;
             (.total_count == 5) and
-            one_success("Validate release version") and
-            one_success("Package Windows installer") and
-            one_success("Package macOS disk image (x86_64)") and
-            one_success("Package macOS disk image (arm64)") and
+            exact_job("Validate release version"; "success") and
+            exact_job("Package Windows installer"; "success") and
+            exact_job("Package macOS disk image (x86_64)"; "success") and
+            exact_job("Package macOS disk image (arm64)"; "success") and
+            exact_job("Publish unsigned preview release"; "skipped") and
             ([.jobs[] |
               select(
-                .name == "Publish unsigned preview release" and
-                .status == "completed" and
-                .conclusion == "skipped"
-              )] | length == 1) and
-            ([.jobs[] |
-              select(.name == "Package macOS disk image (arm64)") |
-              select(
+                .run_id == $source_run and
+                .head_sha == $build_commit and
+                .name == "Package macOS disk image (arm64)" and
                 (.labels | index("macos-15")) != null and
                 (.runner_id | type == "number") and .runner_id > 0 and
                 (.runner_name | type == "string") and (.runner_name | length) > 0 and
