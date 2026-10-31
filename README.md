@@ -162,3 +162,29 @@ git push origin v0.1.4
 - [技术文档](docs/technical/technical-design.md)
 
 当前 AI 方向聚焦 OCR、图像识别、文档处理、图片增强和试卷去手写等传统 AI 小工具，暂不考虑 Agent 能力。技术方案采用 Qt 6、C++ 和 CMake，AI 推理逐步从 Python/PyTorch Worker 迁移到 ONNX Runtime C++。
+
+## 许可协议 / License
+
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE) 协议，**仅限非商业用途**。
+
+✅ **允许**：
+
+-   个人学习、研究、实验、测试
+    
+-   个人兴趣项目、业余爱好
+    
+-   慈善组织、教育机构、公共科研机构、政府机构使用
+    
+-   在非商业目的下修改、二次开发和分发（需保留本协议及版权声明）
+    
+
+❌ **禁止**：
+
+-   任何商业用途，包括但不限于：用于商业产品、对外提供收费服务、企业内部营利性使用
+    
+
+📩 **商业授权**：如需商业使用，请联系 [544121799@qq.com](mailto:544121799@qq.com) 获取单独授权。
+
+> This project is licensed under the PolyForm Noncommercial License 1.0.0. Commercial use requires a separate license — contact [544121799@qq.com](mailto:544121799@qq.com).
+
+Copyright © 2026 [544121799@qq.com](mailto:544121799@qq.com)
