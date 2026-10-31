@@ -7,6 +7,8 @@
 #include "ui/widgets/tool_grid.h"
 
 #include <QComboBox>
+#include <QFont>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -24,6 +26,7 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     , settings_(settings)
     , history_(history)
     , heading_(new QLabel(tr("工具首页"), this))
+    , subtitle_(new QLabel(tr("本地工具、AI 处理和小游戏，都在这里。"), this))
     , searchMode_(new QComboBox(this))
     , search_(new QLineEdit(this))
     , resultState_(new QLabel(this))
@@ -31,6 +34,7 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     , localFileSearch_(new LocalFileSearchWidget(this))
 {
     heading_->setObjectName(QStringLiteral("pageHeading"));
+    subtitle_->setObjectName(QStringLiteral("pageSubtitle"));
     searchMode_->setObjectName(QStringLiteral("searchModeSelector"));
     searchMode_->addItem(tr("工具搜索"), QStringLiteral("tools"));
     searchMode_->addItem(tr("本地文件"), QStringLiteral("files"));
@@ -38,32 +42,45 @@ HomePage::HomePage(ToolRegistry& registry, Settings& settings, ToolHistory& hist
     search_->setObjectName(QStringLiteral("globalSearch"));
     resultState_->setObjectName(QStringLiteral("resultState"));
     QFont headingFont = heading_->font();
-    headingFont.setPointSize(18);
+    headingFont.setPointSize(26);
     headingFont.setBold(true);
     heading_->setFont(headingFont);
+    subtitle_->setWordWrap(true);
 
     search_->setPlaceholderText(tr("搜索名称、分类、描述、关键词或别名"));
     search_->setClearButtonEnabled(true);
     search_->setAccessibleName(tr("全局工具搜索"));
     search_->setAccessibleDescription(tr("输入文字以筛选当前页面中的工具卡片"));
-
     resultState_->setAlignment(Qt::AlignCenter);
     resultState_->setWordWrap(true);
     resultState_->setAccessibleName(tr("工具列表状态"));
 
-    auto* searchLayout = new QHBoxLayout;
-    searchLayout->setContentsMargins(0, 0, 0, 0);
+    searchMode_->setMinimumWidth(108);
+    searchMode_->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    search_->setMinimumHeight(44);
+
+    auto* searchSurface = new QFrame(this);
+    searchSurface->setObjectName(QStringLiteral("searchSurface"));
+    auto* searchLayout = new QHBoxLayout(searchSurface);
+    searchLayout->setContentsMargins(12, 7, 12, 7);
+    searchLayout->setSpacing(8);
     searchLayout->addWidget(searchMode_);
     searchLayout->addWidget(search_, 1);
 
+    auto* privacyHint = new QLabel(tr("●  本地优先 · 不上传内容 · 支持键盘操作"), this);
+    privacyHint->setObjectName(QStringLiteral("privacyHint"));
+
     auto* layout = new QVBoxLayout(this);
-    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setContentsMargins(28, 28, 28, 22);
     layout->setSpacing(10);
     layout->addWidget(heading_);
-    layout->addLayout(searchLayout);
+    layout->addWidget(subtitle_);
+    layout->addSpacing(10);
+    layout->addWidget(searchSurface);
     layout->addWidget(resultState_);
     layout->addWidget(toolGrid_, 1);
     layout->addWidget(localFileSearch_, 1);
+    layout->addWidget(privacyHint);
 
     connect(search_, &QLineEdit::textChanged, this, [this](const QString& query) {
         if (searchMode_->currentData().toString() == QStringLiteral("files")) {

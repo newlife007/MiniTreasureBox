@@ -56,11 +56,11 @@ signals:
 
 private slots:
     void queueChangedPath(const QString& path);
+    void applyPendingUpdates();
 
 private:
     void beginIndexBuild();
     [[nodiscard]] bool configureWatcher();
-    void applyPendingUpdates();
     void scheduleSearch();
     void startSearch();
     void displayResults(const QList<LocalFileSearchResult>& results);

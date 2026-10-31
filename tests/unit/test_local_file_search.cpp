@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QFileSystemWatcher>
 #include <QFutureWatcher>
 #include <QLabel>
 #include <QLineEdit>
@@ -300,12 +301,13 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QTemporaryDir temporary;
     QVERIFY(temporary.isValid());
     QDir root(temporary.path());
-    QVERIFY(root.mkpath(QStringLiteral("branch-a")));
-    QVERIFY(root.mkpath(QStringLiteral("branch-b")));
-    const QString branchA = root.filePath(QStringLiteral("branch-a"));
-    const QString branchB = root.filePath(QStringLiteral("branch-b"));
+    QVERIFY(root.mkpath(QStringLiteral("branch")));
+    const QString branch = root.filePath(QStringLiteral("branch"));
 
     LocalFileSearchWidget widget;
+    auto* nativeWatcher = widget.findChild<QFileSystemWatcher*>();
+    QVERIFY(nativeWatcher);
+    nativeWatcher->blockSignals(true);
     widget.setRootDirectory(temporary.path());
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 5000);
 
@@ -316,53 +318,62 @@ void LocalFileSearchTest::serializesOverlappingWatcherRefreshes()
     QList<LocalFileSearchIndex> updateBases;
     QList<QStringList> updatePaths;
     QList<std::shared_ptr<std::atomic_bool>> cancellations;
+    LocalFileSearchIndexResult firstSnapshot;
+    LocalFileSearchIndexResult secondSnapshot;
     widget.setIndexUpdater(
-        [&firstUpdate, &secondUpdate, &updateBases, &updatePaths, &cancellations](
+        [&firstUpdate, &secondUpdate, &updateBases, &updatePaths, &cancellations,
+         &firstSnapshot, &secondSnapshot](
             const LocalFileSearchIndex& current, const QStringList& paths,
             const std::shared_ptr<std::atomic_bool>& cancelled) {
             updateBases.append(current);
             updatePaths.append(paths);
             cancellations.append(cancelled);
-            return updateBases.size() == 1 ? firstUpdate.future()
-                                           : secondUpdate.future();
+            if (updateBases.size() == 1) {
+                firstSnapshot = LocalFileSearch::refreshSubtree(
+                    current, paths.first(), cancelled);
+                return firstUpdate.future();
+            }
+            secondSnapshot = LocalFileSearch::refreshSubtree(
+                current, paths.first(), cancelled);
+            return secondUpdate.future();
         });
 
-    const QString firstPath = QDir(branchA).filePath(
+    const QString firstPath = QDir(branch).filePath(
         QStringLiteral("first-added.txt"));
     writeFile(firstPath, "first");
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
-                                      Q_ARG(QString, branchA)));
+                                      Q_ARG(QString, branch)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 1, 3000);
-    QCOMPARE(updatePaths.first(), QStringList{branchA});
+    QCOMPARE(updatePaths.first(), QStringList{branch});
+    QVERIFY(firstSnapshot.success);
 
-    const QString secondPath = QDir(branchB).filePath(
+    const QString secondPath = QDir(branch).filePath(
         QStringLiteral("second-added.txt"));
     writeFile(secondPath, "second");
     QVERIFY(QMetaObject::invokeMethod(&widget, "queueChangedPath",
                                       Qt::DirectConnection,
-                                      Q_ARG(QString, branchB)));
+                                      Q_ARG(QString, branch)));
+    QVERIFY(QMetaObject::invokeMethod(&widget, "applyPendingUpdates",
+                                      Qt::DirectConnection));
     QTest::qWait(350);
     QCOMPARE(updateBases.size(), 1);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
-    auto firstResult = LocalFileSearch::refreshSubtree(
-        updateBases.first(), updatePaths.first().first());
-    QVERIFY(firstResult.success);
-    firstUpdate.addResult(firstResult);
+    firstUpdate.addResult(firstSnapshot);
     firstUpdate.finish();
 
     QTRY_COMPARE_WITH_TIMEOUT(updateBases.size(), 2, 3000);
-    QCOMPARE(updatePaths.at(1), QStringList{branchB});
+    QCOMPARE(updatePaths.at(1), QStringList{branch});
     QCOMPARE(LocalFileSearch::search(updateBases.at(1),
                                      QStringLiteral("first-added")).size(),
              1);
+    QVERIFY(secondSnapshot.success);
     QVERIFY(!cancellations.first()->load(std::memory_order_relaxed));
 
-    auto secondResult = LocalFileSearch::refreshSubtree(
-        updateBases.at(1), updatePaths.at(1).first());
-    QVERIFY(secondResult.success);
-    secondUpdate.addResult(secondResult);
+    secondUpdate.addResult(secondSnapshot);
     secondUpdate.finish();
     QTRY_VERIFY_WITH_TIMEOUT(widget.isIndexReady(), 3000);
 

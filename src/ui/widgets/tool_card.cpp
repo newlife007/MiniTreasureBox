@@ -54,6 +54,7 @@ ToolCard::ToolCard(const ToolMetadata& metadata, bool favorite, QWidget* parent)
     setCursor(Qt::PointingHandCursor);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     setMinimumHeight(184);
+    setProperty("surfaceCard", true);
     setAccessibleName(metadata.name);
     setAccessibleDescription(tr("%1。分类：%2。%3")
                                  .arg(metadata.description, metadata.category,
@@ -63,6 +64,8 @@ ToolCard::ToolCard(const ToolMetadata& metadata, bool favorite, QWidget* parent)
     iconLabel_->setObjectName(QStringLiteral("toolIcon"));
     iconLabel_->setPixmap(icon_.pixmap(kIconSize, kIconSize));
     iconLabel_->setFixedSize(kIconSize, kIconSize);
+    iconLabel_->setAlignment(Qt::AlignCenter);
+    iconLabel_->setProperty("iconTile", true);
     iconLabel_->setAccessibleName(tr("%1 图标").arg(metadata.name));
 
     nameLabel_->setObjectName(QStringLiteral("toolName"));
@@ -81,8 +84,10 @@ ToolCard::ToolCard(const ToolMetadata& metadata, bool favorite, QWidget* parent)
     categoryLabel_->setForegroundRole(QPalette::PlaceholderText);
 
     networkLabel_->setObjectName(QStringLiteral("toolNetworkState"));
-    networkLabel_->setVisible(metadata.requiresNetwork);
-    networkLabel_->setForegroundRole(QPalette::Highlight);
+    networkLabel_->setText(metadata.requiresNetwork ? tr("需要网络连接") : tr("本地运行"));
+    networkLabel_->setVisible(true);
+    networkLabel_->setForegroundRole(metadata.requiresNetwork ? QPalette::Highlight
+                                                             : QPalette::Mid);
 
     favoriteButton_->setObjectName(QStringLiteral("favoriteButton"));
     favoriteButton_->setCheckable(true);
@@ -201,7 +206,7 @@ void ToolCard::paintEvent(QPaintEvent* event)
     }
     painter.setBrush(background);
     painter.setPen(QPen(border, hasFocus() ? 2.0 : 1.0));
-    painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 10, 10);
+    painter.drawRoundedRect(rect().adjusted(1, 1, -1, -1), 14, 14);
 }
 
 QIcon ToolCard::resolveIcon(const ToolMetadata& metadata, QWidget* widget)
